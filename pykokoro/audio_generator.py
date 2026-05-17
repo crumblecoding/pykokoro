@@ -13,6 +13,11 @@ import onnxruntime as rt
 
 from .constants import MAX_PHONEME_LENGTH, SAMPLE_RATE
 from .prosody import apply_prosody
+from .short_sentence_handler import (
+    SHORT_SENTENCE_META_KEY,
+    apply_short_sentence_mode,
+    cut_short_sentence_phrase_audio,
+)
 from .tokenizer import Tokenizer
 from .trim import trim as trim_audio
 from .types import PhonemeSegment
@@ -61,6 +66,10 @@ class AudioGenerator:
         self._uses_input_ids = any(
             input_meta.name == "input_ids" for input_meta in session.get_inputs()
         )
+        get_outputs = getattr(session, "get_outputs", None)
+        outputs = get_outputs() if callable(get_outputs) else []
+        self._has_timestamp_output = len(outputs) > 1
+        self._reported_missing_timestamp_output = False
 
     def _tokenize_phonemes(self, phonemes: str) -> list[int]:
         trimmed = phonemes[:MAX_PHONEME_LENGTH]
@@ -112,6 +121,22 @@ class AudioGenerator:
             "speed": self._float_speed_input(speed),
         }
 
+    def _run_onnx(
+        self,
+        phonemes: str,
+        voice_style: np.ndarray,
+        speed: float,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        tokens = self._tokenize_phonemes(phonemes)
+        voice_style_indexed = self._select_voice_style(voice_style, len(tokens))
+        tokens_padded = self._pad_tokens(tokens)
+        inputs = self._build_onnx_inputs(tokens_padded, voice_style_indexed, speed)
+        results = self._session.run(None, inputs)
+        audio = np.asarray(results[0]).T
+        audio = np.squeeze(audio)
+        pred_dur = np.asarray(results[1]).squeeze() if len(results) > 1 else None
+        return audio, pred_dur
+
     def generate_from_phonemes(
         self,
         phonemes: str,
@@ -130,13 +155,7 @@ class AudioGenerator:
         Returns:
             Tuple of (audio samples, sample rate)
         """
-        tokens = self._tokenize_phonemes(phonemes)
-        voice_style_indexed = self._select_voice_style(voice_style, len(tokens))
-        tokens_padded = self._pad_tokens(tokens)
-        inputs = self._build_onnx_inputs(tokens_padded, voice_style_indexed, speed)
-        result = self._session.run(None, inputs)[0]
-        audio = np.asarray(result).T
-        audio = np.squeeze(audio)
+        audio, _ = self._run_onnx(phonemes, voice_style, speed)
         return audio, SAMPLE_RATE
 
     def split_phonemes(self, phonemes: str) -> list[str]:  # noqa: C901
@@ -306,7 +325,7 @@ class AudioGenerator:
     def _resolve_short_sentence_config(
         self, enable_short_sentence_override: bool | None
     ) -> ShortSentenceConfig | None:
-        from .short_sentence_handler import ShortSentenceConfig
+        from .short_sentence_handler import ShortSentenceConfig, WrapResolveMode
 
         effective_config = self._short_sentence_config
 
@@ -326,14 +345,52 @@ class AudioGenerator:
         elif effective_config is None:
             effective_config = ShortSentenceConfig()
 
+        if (
+            effective_config is not None
+            and effective_config.enabled
+            and not self._has_timestamp_output
+            and self._uses_phrase_short_sentence_mode(effective_config)
+        ):
+            if not self._reported_missing_timestamp_output:
+                message = (
+                    "Loaded ONNX model has no timestamp output; phrase-based short "
+                    "sentence modes require timestamps. Falling back to wrap mode "
+                    "for this run."
+                )
+                print(message)
+                self._reported_missing_timestamp_output = True
+            resolve_modes = dict(effective_config.resolve_modes)
+            resolve_modes["wrap"] = resolve_modes.get("wrap", WrapResolveMode())
+            intervals = [
+                dataclasses.replace(interval, resolve_mode="wrap")
+                if interval.resolve_mode is not False
+                else interval
+                for interval in effective_config.intervals
+            ]
+            effective_config = dataclasses.replace(
+                effective_config,
+                resolve_modes=resolve_modes,
+                intervals=intervals,
+            )
+
         return effective_config
+
+    @staticmethod
+    def _uses_phrase_short_sentence_mode(config: ShortSentenceConfig) -> bool:
+        for interval in config.intervals:
+            if interval.resolve_mode is False:
+                continue
+            mode = config.resolve_modes.get(interval.resolve_mode)
+            if mode is not None and mode.kind in {"phrase", "randomized-phrase"}:
+                return True
+        return False
 
     def _preprocess_segments(
         self,
         segments: list[PhonemeSegment],
         enable_short_sentence_override: bool | None,
     ) -> list[PhonemeSegment]:
-        from .short_sentence_handler import is_segment_empty
+        from .short_sentence_handler import is_segment_empty, is_segment_short
 
         effective_config = self._resolve_short_sentence_config(
             enable_short_sentence_override
@@ -360,6 +417,23 @@ class AudioGenerator:
                     )
                 )
                 continue
+
+            if effective_config:
+                detection_segment = dataclasses.replace(segment, tokens=tokens)
+                if is_segment_short(detection_segment, effective_config):
+                    short_sentence = apply_short_sentence_mode(
+                        segment,
+                        phonemes,
+                        tokens,
+                        effective_config,
+                        self._tokenizer.tokenize,
+                    )
+                    phonemes = short_sentence.phonemes
+                    tokens = short_sentence.tokens
+                    if short_sentence.metadata is not None:
+                        metadata = dict(segment.ssmd_metadata or {})
+                        metadata[SHORT_SENTENCE_META_KEY] = short_sentence.metadata
+                        segment = dataclasses.replace(segment, ssmd_metadata=metadata)
 
             if len(tokens) > MAX_PHONEME_LENGTH:
                 batches = [
@@ -388,6 +462,7 @@ class AudioGenerator:
                 processed.append(
                     dataclasses.replace(
                         segment,
+                        phonemes=phonemes,
                         tokens=tokens,
                         pause_before=segment.pause_before,
                         pause_after=segment.pause_after,
@@ -413,12 +488,56 @@ class AudioGenerator:
             segment_voice_style = self._resolve_segment_voice(
                 segment, voice_style, voice_resolver
             )
-            audio, _ = self.generate_from_phonemes(
+            audio, pred_dur = self._run_onnx(
                 segment.phonemes, segment_voice_style, speed
             )
+            self._log_short_sentence_timestamps(segment, pred_dur)
             segment.raw_audio = audio
 
         return segments
+
+    def _log_short_sentence_timestamps(
+        self,
+        segment: PhonemeSegment,
+        pred_dur: np.ndarray | None,
+    ) -> None:
+        if pred_dur is None:
+            return
+        short_sentence_metadata = (
+            segment.ssmd_metadata or {}
+        ).get(SHORT_SENTENCE_META_KEY)
+        if not isinstance(short_sentence_metadata, dict):
+            return
+        timing_tokens = short_sentence_metadata.get("timing_tokens")
+        if not isinstance(timing_tokens, list):
+            return
+        timestamped = _join_timestamps(timing_tokens, pred_dur)
+        target_timestamps = [
+            token
+            for token in timestamped
+            if token.get("is_target")
+            and isinstance(token.get("start_ts"), (int, float))
+            and isinstance(token.get("end_ts"), (int, float))
+        ]
+        if target_timestamps:
+            short_sentence_metadata["target_start_ts"] = min(
+                float(token["start_ts"]) for token in target_timestamps
+            )
+            short_sentence_metadata["target_end_ts"] = max(
+                float(token["end_ts"]) for token in target_timestamps
+            )
+        for token in timestamped:
+            if not token.get("is_target"):
+                continue
+            message = (
+                "[pykokoro timestamp] "
+                f"segment={segment.text!r} "
+                f"token={token.get('text')!r} "
+                f"start={token.get('start_ts')} "
+                f"end={token.get('end_ts')}"
+            )
+            logger.info(message)
+            print(message)
 
     def _postprocess_audio_segments(
         self, segments: list[PhonemeSegment], trim_silence: bool
@@ -433,6 +552,11 @@ class AudioGenerator:
                 continue
 
             audio = segment.raw_audio
+            short_sentence_metadata = (
+                segment.ssmd_metadata or {}
+            ).get(SHORT_SENTENCE_META_KEY)
+            if isinstance(short_sentence_metadata, dict):
+                audio = cut_short_sentence_phrase_audio(audio, short_sentence_metadata)
             if trim_silence:
                 audio, _ = trim_audio(audio)
             segment.processed_audio = self._apply_segment_prosody(audio, segment)
@@ -556,3 +680,50 @@ class AudioGenerator:
         )
 
         return audio, SAMPLE_RATE
+
+
+def _join_timestamps(
+    tokens: list[object],
+    pred_dur: np.ndarray,
+) -> list[dict[str, object]]:
+    """Map timestamped model durations to G2P token metadata."""
+    durations = np.asarray(pred_dur).reshape(-1)
+    if not tokens or len(durations) < 3:
+        return []
+
+    timestamped: list[dict[str, object]] = []
+    divisor = 80
+    left = right = 2 * max(0.0, float(durations[0].item()) - 3)
+    i = 1
+
+    for raw_token in tokens:
+        if i >= len(durations) - 1:
+            break
+        token = dict(raw_token) if isinstance(raw_token, dict) else {}
+        phonemes = str(token.get("phonemes") or "")
+        whitespace = str(token.get("whitespace") or "")
+
+        if not phonemes:
+            if whitespace and i < len(durations):
+                i += 1
+                if i < len(durations):
+                    left = right + float(durations[i].item())
+                    right = left + float(durations[i].item())
+                    i += 1
+            timestamped.append(token)
+            continue
+
+        j = i + len(phonemes)
+        if j >= len(durations):
+            break
+
+        token["start_ts"] = left / divisor
+        token_dur = float(durations[i:j].sum().item())
+        space_dur = float(durations[j].item()) if whitespace else 0.0
+        left = right + (2 * token_dur) + space_dur
+        token["end_ts"] = left / divisor
+        right = left + space_dur
+        i = j + (1 if whitespace else 0)
+        timestamped.append(token)
+
+    return timestamped

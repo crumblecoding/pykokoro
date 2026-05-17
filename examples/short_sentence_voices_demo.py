@@ -29,7 +29,11 @@ import soundfile as sf
 
 from pykokoro import KokoroPipeline, PipelineConfig
 from pykokoro.generation_config import GenerationConfig
-from pykokoro.short_sentence_handler import ShortSentenceConfig
+from pykokoro.short_sentence_handler import (
+    RandomizedPhraseResolveMode,
+    ShortSentenceConfig,
+    ShortSentenceInterval,
+)
 from pykokoro.tokenizer import Tokenizer
 
 # Enable debug logging to see detailed processing information
@@ -50,8 +54,10 @@ TEST_SENTENCES = [
     "Stop!",
     "What?",
     "Don't!",
+    "One … step. In front.",
+    "thing on her chest.",
+    "Of.",
 ]
-TEST_SENTENCE = TEST_SENTENCES[2]
 # Voice to use
 
 VOICES = [
@@ -90,6 +96,7 @@ def print_separator(title: str) -> None:
 
 def test_sentence_with_config(
     voice: str,
+    text: str,
     config: ShortSentenceConfig | None,
     config_name: str,
 ) -> tuple[np.ndarray, int]:
@@ -113,7 +120,7 @@ def test_sentence_with_config(
         )
     )
 
-    res = kokoro_test.run(TEST_SENTENCE)
+    res = kokoro_test.run(text)
     samples, sr = res.audio, res.sample_rate
 
     print(f"  {config_name:25} -> {len(samples):6} samples ({len(samples) / sr:.3f}s)")
@@ -127,7 +134,7 @@ def main():
 
     print("\nThis demo shows how PyKokoro improves audio quality for short sentences")
     print("using cross-correlation extraction with context.")
-    print(f"\nText: {TEST_SENTENCE}")
+    print(f"\nTexts: {len(TEST_SENTENCES)} short-sentence samples")
     print(f"Language: {LANG}")
     print("\nNOTE: Audio duration will be similar, but QUALITY will be better")
     print("      with context-prepending. Listen to the generated files to compare!")
@@ -154,34 +161,26 @@ def main():
     intro2 = kokoro.run(announcement).audio
     all_samples2.extend([pause, intro2, pause])
 
-    # Test each sentence with different configurations
+    # Test each voice and sentence with different configurations
     for voice in VOICES:
-        phoneme_count = len(tokenizer.phonemize(TEST_SENTENCE, lang=LANG))
+        print(f"\nVoice: '{voice}'")
+        for text in TEST_SENTENCES:
+            phoneme_count = len(tokenizer.phonemize(text, lang=LANG))
+            print(f"\nText: '{text}' ({phoneme_count} phonemes)")
 
-        print(f"\nVoice: '{voice}' ({phoneme_count} phonemes)")
+            config_enabled = randomized_phrase_short_sentence_config()
+            config_disabled = ShortSentenceConfig(enabled=False)
 
-        # Test with context-prepending enabled (default)
-        config_enabled = ShortSentenceConfig(
-            min_phoneme_length=10,
-            enabled=True,
-        )
+            samples_enabled, sr = test_sentence_with_config(
+                voice, text, config_enabled, "With phrase cutting"
+            )
 
-        # Test with context-prepending disabled
-        config_disabled = ShortSentenceConfig(enabled=False)
-
-        # Generate with both configs
-        samples_enabled, sr = test_sentence_with_config(
-            voice, config_enabled, "With prepending"
-        )
-
-        samples_disabled, sr = test_sentence_with_config(
-            voice, config_disabled, "Without prepending"
-        )
-        # Add: intro + enabled version + pause + disabled version + pause
-        pause = np.zeros(int(sr * 0.1), dtype=np.float32)
-        # all_samples.extend([samples_enabled, pause, samples_disabled, pause])
-        all_samples.extend([samples_enabled, pause])
-        all_samples2.extend([samples_disabled, pause])
+            samples_disabled, sr = test_sentence_with_config(
+                voice, text, config_disabled, "Without phrase cutting"
+            )
+            pause = np.zeros(int(sr * 0.1), dtype=np.float32)
+            all_samples.extend([samples_enabled, pause])
+            all_samples2.extend([samples_disabled, pause])
 
     # Save combined audio
     print_separator("Saving Combined Audio")
@@ -225,6 +224,15 @@ def main():
     print("\n" + "=" * 70)
     print("Listen to the WAV file to hear the difference!")
     print("=" * 70)
+
+def randomized_phrase_short_sentence_config() -> ShortSentenceConfig:
+    """Use phrase generation + cutting for short clauses in this demo."""
+    return ShortSentenceConfig(
+        resolve_modes={"randomized-phrase": RandomizedPhraseResolveMode()},
+        intervals=[
+            ShortSentenceInterval("demo short phrase", 20, "randomized-phrase"),
+        ],
+    )
 
 
 if __name__ == "__main__":

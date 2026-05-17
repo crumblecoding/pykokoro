@@ -532,15 +532,14 @@ See `examples/say_as_demo.py` for comprehensive examples.
 #### 4. Automatic Short Sentence Handling
 
 When processing text, very short sentences (like "Why?" or "Go!") can produce poor audio
-quality when processed individually (only 3-8 phonemes each). Pykokoro automatically
-handles this using a "repeat-and-cut" technique:
+quality when processed individually (only 3-8 phonemes each). Pykokoro can add
+phoneme context around those short segments before synthesis.
 
 **How It Works:**
 
-1. Short segments are detected based on phoneme length (default: <30 phonemes)
-2. The sentence is repeated: "Why?" → "Why? Why? Why?"
-3. TTS generates audio with more context (better prosody)
-4. Audio is trimmed to extract only the first instance
+1. Short segments are detected based on phoneme token length.
+2. A configurable phoneme pretext is added before and after the segment phonemes.
+3. TTS generates audio from the wrapped phoneme sequence with more context.
 
 This happens automatically during `pipe.run()` - no configuration needed!
 
@@ -554,9 +553,8 @@ from pykokoro.short_sentence_handler import ShortSentenceConfig
 
 # More aggressive short sentence handling
 short_sentence_config = ShortSentenceConfig(
-    min_phoneme_length=50,    # Treat segments <50 phonemes as short
-    target_phoneme_length=150, # Repeat until ~150 phonemes
-    max_repetitions=7,         # Allow up to 7 repetitions
+    min_phoneme_length=10,  # Treat segments <10 phoneme tokens as short
+    phoneme_pretext="...",  # Add this before and after short phonemes
 )
 
 pipe = KokoroPipeline(
@@ -567,9 +565,9 @@ res = pipe.run("Why?")
 
 **Default Configuration:**
 
-- `min_phoneme_length=30`: Segments below this use repeat-and-cut
-- `target_phoneme_length=100`: Target length for repeated text
-- `max_repetitions=5`: Maximum times to repeat
+- `min_phoneme_length=5`: Segments below this token count are wrapped
+- `phoneme_pretext="—"`: Phoneme context added before and after short segments
+- `enabled=True`: Short-sentence handling is enabled by default
 
 **Disabling Short Sentence Handling:**
 
@@ -577,7 +575,7 @@ res = pipe.run("Why?")
 from pykokoro import KokoroPipeline, PipelineConfig
 from pykokoro.short_sentence_handler import ShortSentenceConfig
 
-short_sentence_config = ShortSentenceConfig(min_phoneme_length=0)
+short_sentence_config = ShortSentenceConfig(enabled=False)
 pipe = KokoroPipeline(
     PipelineConfig(voice="af_sarah", short_sentence_config=short_sentence_config)
 )

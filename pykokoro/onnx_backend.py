@@ -96,7 +96,7 @@ MODEL_QUALITY_FILES_GITHUB_V1_1_DE: dict[str, str] = {
 MODEL_QUALITY_FILES = MODEL_QUALITY_FILES_HF
 
 # HuggingFace repositories for models and voices (onnx-community)
-HF_REPO_V1_0 = "onnx-community/Kokoro-82M-v1.0-ONNX"
+HF_REPO_V1_0 = "onnx-community/Kokoro-82M-v1.0-ONNX-timestamped"
 HF_REPO_V1_1_ZH = "onnx-community/Kokoro-82M-v1.1-zh-ONNX"
 
 # HuggingFace repositories for configs (hexgrad)

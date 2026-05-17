@@ -63,8 +63,8 @@ class TestIsSegmentShort:
         segment = make_segment(text="Go", phonemes="abc")
         assert is_segment_short(segment) is True
 
-    def test_multi_word_returns_false(self):
-        """Multi-word segments should be considered short."""
+    def test_multi_word_can_be_short(self):
+        """Multi-word segments can still be considered short."""
         segment = make_segment(text="Go now", phonemes="abc")
         assert is_segment_short(segment) is True
 

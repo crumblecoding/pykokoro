@@ -626,14 +626,16 @@ Trim Silence from Audio
 Short Sentence Handling
 -----------------------
 
-PyKokoro improves short, single-word sentences by surrounding the word with a
-pause marker. You can tune settins via ``ShortSentenceConfig``:
+PyKokoro improves short sentences by surrounding the segment phonemes with a
+configurable phoneme pretext before synthesis. You can tune settings via
+``ShortSentenceConfig``:
 
 .. code-block:: python
 
    from pykokoro.short_sentence_handler import ShortSentenceConfig
 
    short_config = ShortSentenceConfig(
+       min_phoneme_length=10,
        phoneme_pretext="…",
    )
 
