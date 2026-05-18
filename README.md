@@ -569,6 +569,12 @@ res = pipe.run("Why?")
 - `phoneme_pretext="—"`: Phoneme context added before and after short segments
 - `enabled=True`: Short-sentence handling is enabled by default
 
+**Voice Recommendation:**
+
+For short-sentence workloads, avoid voices that scored below 100% success in short-sentence
+handling tests: `af_bella`, `af_heart`, `af_jessica`, `af_nicole`, `af_river`, `am_eric`,
+and `am_liam`.
+
 **Disabling Short Sentence Handling:**
 
 ```python

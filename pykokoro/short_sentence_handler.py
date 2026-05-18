@@ -60,20 +60,23 @@ class RandomizedPhraseResolveMode:
     kind: Literal["randomized-phrase"] = "randomized-phrase"
     neutral_phrases: list[str] = field(
         default_factory=lambda: [
-            "He paused for a long time. … {segment} … Then he continued."
-            #"He paused for a long time. … {segment} Then he continued."
+            "He paused for a long time. … {segment} … Then he continued.",
             "He paused. … {segment} Then he continued.",
            # "The transcript paused…: {segment}; the next entry followed.",
-            "She looked up…: {segment}. The conversation resumed."
+            "She looked up…: {segment}. The conversation resumed.",
             #"The line ended: {segment}; the next line began.",
-            "The line ended…: {segment}; the next line began."
+            "The line ended…: {segment}; the next line began.",
+            "The letter paused, {segment}, before the final line."
+            "The conversation stopped, {segment}, before someone answered."
         ]
     )
     end_phrases: list[str] = field(
         default_factory=lambda: [
-            "The word is hello. The word is '{segment}'",
-            "The line ends with hello. The line ends with '{segment}'",
+            "The judge asked for a final answer. {segment}",
+            "The recording trails off after the words, … {segment}",
             "The final word is hello. The final word is '{segment}'",
+            "The final word is hello. The final word is … '{segment}'",
+            "The caller left one final message…: {segment}"
         ]
     )
     silence_threshold: float = 1e-4

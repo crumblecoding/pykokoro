@@ -97,19 +97,32 @@ def main() -> None:
         ),
         reverse=True,
     )
-    ranked_by_successes = sorted(
-        scores,
-        key=lambda score: score.successes,
-        reverse=True,
+    perfect_scores = [score for score in ranked if score.success_ratio == 1.0]
+    lower_success_scores = [score for score in ranked if 0.0 < score.success_ratio < 1.0]
+    zero_success_scores = [score for score in ranked if score.success_ratio == 0.0]
+    worst_nonzero_scores = sorted(
+        lower_success_scores,
+        key=lambda score: (
+            score.success_ratio,
+            score.successes,
+            score.mean_gap_seconds,
+            -score.mean_pause_seconds,
+        ),
     )
 
-    print_scores("Top 10 voices", ranked)
-    print_scores("Top 10 voices by successes only", ranked_by_successes)
+    print_scores("Voices with 100% success", perfect_scores)
+    print_scores("Top 5 voices below 100% success", lower_success_scores[:5])
+    print_scores("Voices with 0% success", zero_success_scores)
+    print_scores("5 worst voices above 0% success", worst_nonzero_scores[:5])
 
 
 def print_scores(title: str, scores: list[VoiceScore]) -> None:
     print(title)
-    for index, score in enumerate(scores[:10], start=1):
+    if not scores:
+        print("None")
+        return
+
+    for index, score in enumerate(scores, start=1):
         print(
             f"{index}. {score.voice} | "
             f"success={score.successes}/{score.attempts} "

@@ -22,63 +22,25 @@ FRAME_DURATION_MS = 5
 ENERGY_THRESHOLD = 0.05
 MIN_SILENCE_SECONDS = 0.02
 MAX_BOUNDARY_GAP_SECONDS = 0.30
+REQUIRE_BEFORE_BOUNDARY = True
+REQUIRE_AFTER_BOUNDARY = True
 
 PHRASE_CANDIDATES = [
-    "He paused. {segment} Then he continued.",
-    "She listened; {segment}; then she answered.",
     "The room fell quiet … {segment} … afterward, they moved on.",
     "He waited a moment — {segment} — then spoke again.",
-    "She looked up: {segment}. The conversation resumed.",
-    "The question ended; {segment}. The next one followed.",
-    "A silence passed … {segment}. Then the meeting continued.",
-    "He stopped reading — {segment}. Then he turned the page.",
-    "She took a breath, {segment}, then continued.",
-    "The line ended: {segment}; the next line began.",
-    "The speaker paused … {segment} … then the lecture resumed.",
-    "The witness stopped; {segment}; then the lawyer continued.",
-    "The child hesitated — {segment} — then the answer came.",
-    "The caller waited: {segment}. Then the operator replied.",
     "The clerk paused, {segment}, before the next name was called.",
-    "The judge listened … {segment}. Then the hearing continued.",
-    "The guide stopped — {segment}. Then the tour moved on.",
-    "The host waited; {segment}. Then the interview resumed.",
-    "The actor paused: {segment}; then the scene continued.",
-    "The reader stopped … {segment} … then the story went on.",
     "The narrator paused — {segment} — then the chapter continued.",
-    "The announcer stopped; {segment}; then the program resumed.",
     "The student thought, {segment}, before the teacher continued.",
-    "The patient paused … {segment}. Then the doctor replied.",
-    "The guard listened: {segment}. Then he stepped aside.",
-    "The captain waited — {segment} — then the order followed.",
-    "The message ended. {segment} Another message began.",
-    "The sentence stopped; {segment}; then a new sentence followed.",
-    "The report paused … {segment} … then the summary continued.",
-    "The transcript paused: {segment}; the next entry followed.",
-    "The note ended — {segment}. Then the signature appeared.",
-    "The letter paused, {segment}, before the final line.",
-    "The memo stopped … {segment}. Then the footer appeared.",
-    "The answer ended: {segment}. Then the explanation began.",
     "The response stopped — {segment} — then the prompt continued.",
-    "The voice faded … {segment} … then it returned.",
     "The hallway went quiet; {segment}; then footsteps resumed.",
-    "The music stopped: {segment}. Then the singer continued.",
-    "The bell rang — {segment}. Then the class resumed.",
-    "The door closed … {segment}. Then the room settled.",
-    "The page turned, {segment}, and the reading continued.",
-    "The screen changed; {segment}; then the next slide appeared.",
-    "The scene ended — {segment} — then the story continued.",
-    "The crowd quieted … {segment} … then the speech resumed.",
-    "The phone went silent: {segment}. Then the caller spoke.",
-    "The radio paused; {segment}; then the broadcast continued.",
-    "The recording stopped — {segment}. Then the next clip played.",
-    "The lesson paused … {segment}. Then the teacher continued.",
-    "The conversation stopped, {segment}, before someone answered.",
-    "The final line ended: {segment}. Then silence followed.",
-    "The word, {segment}, appears here.",
-    "The line says, {segment}, before continuing.",
-    "The entry reads, {segment}, —in this place.",
-    "It could be said, {segment}, —in all its glory—, might have been better.",
-    "He waited a moment, — {segment} — then spoke again."
+    "He paused for a long time. … {segment} … Then he continued.",
+    "He paused. … {segment} Then he continued.",
+    "The transcript paused…: {segment}; the next entry followed.",
+    "She looked up…: {segment}. The conversation resumed.",
+    "The line ended: {segment}; the next line began.",
+    "The line ended…: {segment}; the next line began.",
+    "The letter paused, {segment}, before the final line."
+    "The conversation stopped, {segment}, before someone answered."
 ]
 
 # Keep this in sync with examples/short_sentence_demo.py.
@@ -148,10 +110,7 @@ def main() -> None:
                 f"Processed {score.phrase!r} | "
                 f"success={score.successes}/{score.attempts} "
                 f"({score.success_ratio:.0%}) | "
-                f"before_gap={score.mean_before_gap_seconds:.3f}s | "
-                f"before_pause={score.mean_before_pause_seconds:.3f}s | "
-                f"after_gap={score.mean_after_gap_seconds:.3f}s | "
-                f"after_pause={score.mean_after_pause_seconds:.3f}s"
+                f"{format_score_metrics(score)}"
             )
     finally:
         kokoro.close()
@@ -166,30 +125,30 @@ def main() -> None:
         ),
         reverse=True,
     )
-    ranked_after = sorted(
-        scores,
-        key=lambda score: (
-            score.success_ratio,
-            score.successes,
-            -score.mean_after_gap_seconds,
-            score.mean_after_pause_seconds,
-        ),
-        reverse=True,
-    )
-    ranked_combined = sorted(
-        scores,
-        key=lambda score: (
-            score.success_ratio,
-            score.successes,
-            -score.mean_gap_seconds,
-            score.mean_pause_seconds,
-        ),
-        reverse=True,
-    )
-
     print_scores("Top 5 candidate phrases by pause before segment", ranked_before)
-    print_scores("Top 5 candidate phrases by pause after segment", ranked_after)
-    print_scores("Top 5 candidate phrases by combined pause metrics", ranked_combined)
+    if REQUIRE_AFTER_BOUNDARY:
+        ranked_after = sorted(
+            scores,
+            key=lambda score: (
+                score.success_ratio,
+                score.successes,
+                -score.mean_after_gap_seconds,
+                score.mean_after_pause_seconds,
+            ),
+            reverse=True,
+        )
+        ranked_combined = sorted(
+            scores,
+            key=lambda score: (
+                score.success_ratio,
+                score.successes,
+                -score.mean_gap_seconds,
+                score.mean_pause_seconds,
+            ),
+            reverse=True,
+        )
+        print_scores("Top 5 candidate phrases by pause after segment", ranked_after)
+        print_scores("Top 5 candidate phrases by combined pause metrics", ranked_combined)
 
 
 def print_scores(title: str, scores: list[CandidateScore]) -> None:
@@ -199,11 +158,22 @@ def print_scores(title: str, scores: list[CandidateScore]) -> None:
             f"{index}. {score.phrase!r} | "
             f"success={score.successes}/{score.attempts} "
             f"({score.success_ratio:.0%}) | "
-            f"before_gap={score.mean_before_gap_seconds:.3f}s | "
-            f"before_pause={score.mean_before_pause_seconds:.3f}s | "
-            f"after_gap={score.mean_after_gap_seconds:.3f}s | "
-            f"after_pause={score.mean_after_pause_seconds:.3f}s"
+            f"{format_score_metrics(score)}"
         )
+
+
+def format_score_metrics(score: CandidateScore) -> str:
+    before_metrics = (
+        f"before_gap={score.mean_before_gap_seconds:.3f}s | "
+        f"before_pause={score.mean_before_pause_seconds:.3f}s"
+    )
+    if not REQUIRE_AFTER_BOUNDARY:
+        return f"{before_metrics} | after_gap=n/a | after_pause=n/a"
+    return (
+        f"{before_metrics} | "
+        f"after_gap={score.mean_after_gap_seconds:.3f}s | "
+        f"after_pause={score.mean_after_pause_seconds:.3f}s"
+    )
 
 
 def score_phrase(
@@ -247,13 +217,19 @@ def score_phrase(
         target_start = int(min(float(token["start_ts"]) for token in target_tokens) * SAMPLE_RATE)
         target_end = int(max(float(token["end_ts"]) for token in target_tokens) * SAMPLE_RATE)
         runs = quiet_runs(audio)
-        before = nearest_run_before(runs, target_start)
-        after = nearest_run_after(runs, target_end)
-        if before is None or after is None:
+        before = nearest_run_before(runs, target_start) if REQUIRE_BEFORE_BOUNDARY else None
+        after = nearest_run_after(runs, target_end) if REQUIRE_AFTER_BOUNDARY else None
+        if REQUIRE_BEFORE_BOUNDARY and before is None:
+            continue
+        if REQUIRE_AFTER_BOUNDARY and after is None:
             continue
 
-        before_gap = max(0, target_start - before[1]) / SAMPLE_RATE
-        after_gap = max(0, after[0] - target_end) / SAMPLE_RATE
+        before_gap = (
+            max(0, target_start - before[1]) / SAMPLE_RATE if before is not None else 0.0
+        )
+        after_gap = (
+            max(0, after[0] - target_end) / SAMPLE_RATE if after is not None else 0.0
+        )
         if (
             before_gap > MAX_BOUNDARY_GAP_SECONDS
             or after_gap > MAX_BOUNDARY_GAP_SECONDS
@@ -263,8 +239,10 @@ def score_phrase(
         successes += 1
         before_gaps.append(before_gap)
         after_gaps.append(after_gap)
-        before_pause_lengths.append((before[1] - before[0]) / SAMPLE_RATE)
-        after_pause_lengths.append((after[1] - after[0]) / SAMPLE_RATE)
+        if before is not None:
+            before_pause_lengths.append((before[1] - before[0]) / SAMPLE_RATE)
+        if after is not None:
+            after_pause_lengths.append((after[1] - after[0]) / SAMPLE_RATE)
 
     return CandidateScore(
         phrase=phrase,
