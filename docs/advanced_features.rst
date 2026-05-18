@@ -636,13 +636,24 @@ configurable phoneme pretext before synthesis. You can tune settings via
 
    short_config = ShortSentenceConfig(
        min_phoneme_length=10,
+       phrase_fallback_tries=3,
        phoneme_pretext="…",
    )
 
-For better short-sentence handling, prefer these voices in order:
-``bm_fable``, ``af_nova``, ``af_sky``, ``am_onyx``, ``bf_isabella``,
-``bf_alice``, ``am_echo``, ``af_aoede``, ``af_bella``, ``af_alloy``,
-``am_puck``, ``bm_lewis``, ``am_fenrir``, ``am_santa``, and ``bf_emma``.
+Phrase-based modes use the ``energy-valley`` cutter by default. The single neutral
+phrase defaults to ``The conversation stopped, {segment}, before someone answered.``;
+the single end phrase defaults to ``The conversation stopped after one last reply:
+{segment}``.
+When a phrase cut lacks confident boundaries, phrase modes try up to
+``phrase_fallback_tries`` alternate phrase templates before falling back to wrap mode.
+Phrase-based short-sentence handling can significantly slow down processing because
+it may synthesize extra context phrases and fallback candidates, but it usually
+improves the audio for very short segments much more than simple phoneme wrapping.
+
+For phrase-based short-sentence handling with the default cutter, prefer these
+voices in order: ``am_santa``, ``af_nicole``, ``bm_lewis``, ``bm_george``,
+``af_bella``, ``am_echo``, ``af_sky``, ``af_sarah``, ``bm_fable``, ``af_heart``,
+``am_michael``, ``af_alloy``, ``af_nova``, ``bf_isabella``, and ``am_adam``.
 
 Configuration Management
 ------------------------

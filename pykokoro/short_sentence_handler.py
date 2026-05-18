@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 SHORT_SENTENCE_META_KEY = "__short_sentence"
 ResolveModeName = str | Literal[False]
+PhraseSelection = Literal["auto", "neutral", "end"]
 
 
 @dataclass
@@ -48,13 +49,14 @@ class PhraseResolveMode:
     """Configuration for phrase generation and cutting."""
 
     kind: Literal["phrase"] = "phrase"
-    neutral_phrase: str = "She looked up…: {segment}. The conversation resumed."
-    end_phrase: str = "The teacher waited for a response. {segment}"
+    phrase_selection: PhraseSelection = "auto"
+    neutral_phrase: str = "The conversation stopped, {segment}, before someone answered."
+    end_phrase: str = "The conversation stopped after one last reply: {segment}"
     frame_duration_ms: int = 5
     energy_threshold: float = 0.05
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
-    cutter: Literal["vad", "energy-valley"] = "vad"
+    cutter: Literal["energy-valley"] = "energy-valley"
 
 
 @dataclass
@@ -62,34 +64,41 @@ class RandomizedPhraseResolveMode:
     """Configuration for randomized phrase generation and cutting."""
 
     kind: Literal["randomized-phrase"] = "randomized-phrase"
+    phrase_selection: PhraseSelection = "auto"
     neutral_phrases: list[str] = field(
         default_factory=lambda: [
-            "She looked up…: {segment}. The conversation resumed.",
-            "The transcript paused…: {segment}; the next entry followed.",
+            "The conversation stopped, {segment}, before someone answered.",
             "The hallway went quiet; {segment}; then footsteps resumed.",
+            "The radio paused; {segment}; then the broadcast continued.",
+            "The student thought, {segment}, before the teacher continued.",
+            "He paused…: {segment}…? … Is that you?",
+            "The screen changed; {segment}; then the next slide appeared.",
+            "The transcript paused…: {segment}; the next entry followed.",
+            "The music stopped: {segment}. Then the singer continued.",
+            "He paused…: {segment}? Is that you?",
             "The clerk paused, {segment}, before the next name was called.",
         ]
     )
     end_phrases: list[str] = field(
         default_factory=lambda: [
-            "The recording trails off after the words, … {segment}",
-            "Is that … {segment}?",
-            "The transcript closes with the words, {segment}",
-            "The lesson ended when the teacher asked, {segment}",
-            "The letter closed with this unfinished thought — {segment}",
-            "The report concludes with this note: {segment}",
+            "The conversation stopped after one last reply: {segment}",
             "The teacher waited for a response. {segment}",
             "The announcement ended like this: {segment}",
             "There was a pause before the answer came: {segment}",
+            "The report concludes with this note: {segment}",
+            "The recording trails off after the words, … {segment}",
+            "The lesson ended when the teacher asked, {segment}",
             "The host asked again, more quietly this time: {segment}",
-            "The conversation stopped after one last reply: {segment}",
+            "The letter closed with this unfinished thought — {segment}",
+            "The note on the desk simply said, {segment}",
+            "At last, the guide called out, {segment}",
         ]
     )
     frame_duration_ms: int = 5
     energy_threshold: float = 0.05
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
-    cutter: Literal["vad", "energy-valley"] = "vad"
+    cutter: Literal["energy-valley"] = "energy-valley"
 
 
 ShortSentenceResolveMode = (
@@ -150,6 +159,10 @@ class ShortSentenceConfig:
         phoneme_pretext: Phoneme(s) to add before and after the target word
             when generating combined audio for context. Default: "—".
         enabled: Whether short sentence handling is enabled. Default: True.
+        phrase_fallback_tries: Number of alternate phrase templates to try before
+            falling back to wrap mode. Phrase modes can be significantly slower
+            because they may synthesize extra context phrases, but usually improve
+            very short segment audio much more than simple wrapping.
 
     """
 
@@ -170,6 +183,7 @@ class ShortSentenceConfig:
             ShortSentenceInterval("medium", 20, False),
         ]
     )
+    phrase_fallback_tries: int = 3
 
     def should_use_pause_surrounding(self, phoneme_length: int, text: str) -> bool:
         """Check if segment should use pause surrounding.
@@ -325,6 +339,12 @@ def apply_short_sentence_mode(
         return ShortSentenceApplication(wrapped, tokenize(wrapped))
 
     phrase_template = _select_phrase_template(segment.text, mode)
+    phrase_fallback_templates = _select_phrase_fallback_templates(
+        segment.text,
+        mode,
+        used_templates=[phrase_template],
+        limit=config.phrase_fallback_tries,
+    )
     try:
         phrase_result = phonemize_short_sentence_phrase(segment, phrase_template)
     except Exception as exc:
@@ -351,6 +371,7 @@ def apply_short_sentence_mode(
         original_token_count=len(tokens),
         generated_token_count=len(phrase_tokens),
         phrase_template=phrase_template,
+        phrase_fallback_templates=phrase_fallback_templates,
         timing_tokens=timing_tokens,
         fallback_phonemes=fallback_phonemes,
         fallback_tokens=tokenize(fallback_phonemes),
@@ -370,17 +391,118 @@ def cut_short_sentence_phrase_audio(
     return cut_phrase_audio(audio, metadata)
 
 
+def build_short_sentence_phrase_retry(
+    segment: PhonemeSegment,
+    phrase_template: str,
+    base_metadata: dict[str, object],
+) -> ShortSentenceApplication | None:
+    """Build a retry phrase application using the original phrase-cut settings."""
+    try:
+        phrase_result = phonemize_short_sentence_phrase(segment, phrase_template)
+    except Exception as exc:
+        logger.warning(
+            "Failed to phonemize short sentence fallback phrase for '%s': %s",
+            segment.text[:50],
+            exc,
+        )
+        return None
+
+    phrase_phonemes, phrase_tokens, timing_tokens = _coerce_phrase_result(phrase_result)
+    if len(phrase_tokens) > MAX_PHONEME_LENGTH:
+        logger.warning(
+            "Short sentence fallback phrase for '%s' exceeded max token length; "
+            "skipping phrase fallback",
+            segment.text[:50],
+        )
+        return None
+
+    metadata = _build_short_sentence_retry_metadata(
+        base_metadata,
+        generated_token_count=len(phrase_tokens),
+        phrase_template=phrase_template,
+        timing_tokens=timing_tokens,
+    )
+    return ShortSentenceApplication(phrase_phonemes, phrase_tokens, metadata)
+
+
 def _select_phrase_template(segment_text: str, mode: ShortSentenceResolveMode) -> str:
-    use_end_phrase = segment_text.rstrip().endswith(".")
+    use_end_phrase = _uses_end_phrase(segment_text, mode)
     if isinstance(mode, RandomizedPhraseResolveMode):
-        if use_end_phrase:
-            choices = mode.end_phrases or ["The word is hello. The word is '{segment}'"]
-        else:
-            choices = mode.neutral_phrases or ["The word, {segment}, appears here."]
+        choices = _phrase_choices(segment_text, mode)
         return random.choice(choices)
     if isinstance(mode, PhraseResolveMode):
         return mode.end_phrase if use_end_phrase else mode.neutral_phrase
     return ""
+
+
+def _select_phrase_fallback_templates(
+    segment_text: str,
+    mode: ShortSentenceResolveMode,
+    *,
+    used_templates: list[str],
+    limit: int,
+) -> list[str]:
+    limit = max(0, int(limit))
+    if limit == 0:
+        return []
+
+    used = set(used_templates)
+    use_end_phrase = _uses_end_phrase(segment_text, mode)
+    if isinstance(mode, PhraseResolveMode):
+        choices = _default_ranked_phrase_choices(use_end_phrase)
+        return _unique_phrase_templates(choices, used, limit)
+
+    if isinstance(mode, RandomizedPhraseResolveMode):
+        choices = _phrase_choices(segment_text, mode)
+        selected = used_templates[-1] if used_templates else ""
+        try:
+            selected_index = choices.index(selected)
+        except ValueError:
+            selected_index = -1
+        ordered = [
+            choices[(selected_index + offset) % len(choices)]
+            for offset in range(1, len(choices) + 1)
+        ]
+        return _unique_phrase_templates(ordered, used, limit)
+
+    return []
+
+
+def _phrase_choices(segment_text: str, mode: RandomizedPhraseResolveMode) -> list[str]:
+    use_end_phrase = _uses_end_phrase(segment_text, mode)
+    if use_end_phrase:
+        return mode.end_phrases or ["The word is hello. The word is '{segment}'"]
+    return mode.neutral_phrases or ["The word, {segment}, appears here."]
+
+
+def _default_ranked_phrase_choices(use_end_phrase: bool) -> list[str]:
+    defaults = RandomizedPhraseResolveMode()
+    return defaults.end_phrases if use_end_phrase else defaults.neutral_phrases
+
+
+def _unique_phrase_templates(
+    choices: list[str],
+    used: set[str],
+    limit: int,
+) -> list[str]:
+    selected: list[str] = []
+    for choice in choices:
+        if choice in used:
+            continue
+        used.add(choice)
+        selected.append(choice)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _uses_end_phrase(segment_text: str, mode: ShortSentenceResolveMode) -> bool:
+    if isinstance(mode, (PhraseResolveMode, RandomizedPhraseResolveMode)):
+        if mode.phrase_selection == "end":
+            return True
+        if mode.phrase_selection == "neutral":
+            return False
+    return segment_text.rstrip().endswith(".")
 
 
 def _build_short_sentence_metadata(
@@ -390,6 +512,7 @@ def _build_short_sentence_metadata(
     original_token_count: int,
     generated_token_count: int,
     phrase_template: str | None = None,
+    phrase_fallback_templates: list[str] | None = None,
     timing_tokens: list[dict[str, object]] | None = None,
     fallback_phonemes: str | None = None,
     fallback_tokens: list[int] | None = None,
@@ -412,10 +535,45 @@ def _build_short_sentence_metadata(
     }
     if timing_tokens:
         metadata["timing_tokens"] = timing_tokens
+    if phrase_fallback_templates:
+        metadata["phrase_fallback_templates"] = phrase_fallback_templates
     if fallback_phonemes is not None:
         metadata["fallback_phonemes"] = fallback_phonemes
     if fallback_tokens is not None:
         metadata["fallback_tokens"] = fallback_tokens
+    return metadata
+
+
+def _build_short_sentence_retry_metadata(
+    base_metadata: dict[str, object],
+    *,
+    generated_token_count: int,
+    phrase_template: str,
+    timing_tokens: list[dict[str, object]],
+) -> dict[str, object]:
+    original_token_count = int(base_metadata.get("original_token_count", 0))
+    expected_cut_ratio = 1.0
+    if generated_token_count > 0 and original_token_count > 0:
+        expected_cut_ratio = original_token_count / generated_token_count
+
+    metadata: dict[str, object] = {
+        "mode": base_metadata.get("mode"),
+        "kind": base_metadata.get("kind"),
+        "phrase_template": phrase_template,
+        "original_token_count": original_token_count,
+        "generated_token_count": generated_token_count,
+        "expected_cut_ratio": max(0.01, min(0.99, expected_cut_ratio)),
+        "frame_duration_ms": base_metadata.get("frame_duration_ms", 5),
+        "energy_threshold": base_metadata.get("energy_threshold", 0.05),
+        "silence_threshold": base_metadata.get("silence_threshold", 1e-4),
+        "min_silence_seconds": base_metadata.get("min_silence_seconds", 0.02),
+        "cutter": base_metadata.get("cutter", "energy-valley"),
+    }
+    if timing_tokens:
+        metadata["timing_tokens"] = timing_tokens
+    for key in ("fallback_phonemes", "fallback_tokens"):
+        if key in base_metadata:
+            metadata[key] = base_metadata[key]
     return metadata
 
 

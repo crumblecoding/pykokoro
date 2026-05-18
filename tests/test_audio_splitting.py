@@ -366,6 +366,296 @@ def test_preprocess_phrase_mode_uses_end_phrase_for_period(monkeypatch):
     assert metadata["phrase_template"] == "The word is hello. The word is '{segment}'"
 
 
+def test_preprocess_phrase_mode_adds_ranked_phrase_fallbacks(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    default_mode = RandomizedPhraseResolveMode()
+    config = ShortSentenceConfig(
+        phrase_fallback_tries=3,
+        resolve_modes={"phrase": PhraseResolveMode(phrase_selection="neutral")},
+        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+    )
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        assert segment.text == "Go"
+        assert phrase_template == PhraseResolveMode().neutral_phrase
+        return "abc def.", list(range(8))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc",
+        tokens=[],
+    )
+
+    processed = generator._preprocess_segments(
+        [segment], enable_short_sentence_override=True
+    )
+
+    assert processed[0].ssmd_metadata is not None
+    metadata = processed[0].ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["phrase_fallback_templates"] == default_mode.neutral_phrases[1:4]
+
+
+def test_preprocess_phrase_fallbacks_skip_used_template_not_index(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    default_mode = RandomizedPhraseResolveMode()
+    config = ShortSentenceConfig(
+        phrase_fallback_tries=3,
+        resolve_modes={
+            "phrase": PhraseResolveMode(
+                phrase_selection="neutral",
+                neutral_phrase=default_mode.neutral_phrases[1],
+            )
+        },
+        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+    )
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        assert segment.text == "Go"
+        assert phrase_template == default_mode.neutral_phrases[1]
+        return "abc def.", list(range(8))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc",
+        tokens=[],
+    )
+
+    processed = generator._preprocess_segments(
+        [segment], enable_short_sentence_override=True
+    )
+
+    assert processed[0].ssmd_metadata is not None
+    metadata = processed[0].ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["phrase_fallback_templates"] == [
+        default_mode.neutral_phrases[0],
+        default_mode.neutral_phrases[2],
+        default_mode.neutral_phrases[3],
+    ]
+
+
+def test_preprocess_randomized_phrase_mode_adds_following_fallbacks(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    phrases = [
+        "First {segment}.",
+        "Second {segment}.",
+        "Third {segment}.",
+        "Fourth {segment}.",
+    ]
+    config = ShortSentenceConfig(
+        phrase_fallback_tries=3,
+        resolve_modes={
+            "randomized-phrase": RandomizedPhraseResolveMode(
+                phrase_selection="neutral",
+                neutral_phrases=phrases,
+            )
+        },
+        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+    )
+
+    monkeypatch.setattr(short_sentence_handler.random, "choice", lambda choices: choices[2])
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        assert segment.text == "Go"
+        assert phrase_template == phrases[2]
+        return "abc def.", list(range(8))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc",
+        tokens=[],
+    )
+
+    processed = generator._preprocess_segments(
+        [segment], enable_short_sentence_override=True
+    )
+
+    assert processed[0].ssmd_metadata is not None
+    metadata = processed[0].ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["phrase_template"] == phrases[2]
+    assert metadata["phrase_fallback_templates"] == [
+        phrases[3],
+        phrases[0],
+        phrases[1],
+    ]
+
+
+def test_preprocess_phrase_mode_can_force_end_phrase_for_neutral_text(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    config = ShortSentenceConfig(
+        resolve_modes={
+            "phrase": PhraseResolveMode(
+                phrase_selection="end",
+                neutral_phrase="The word, {segment}, appears here.",
+                end_phrase="The word is hello. The word is '{segment}'",
+            )
+        },
+        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+    )
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        assert segment.text == "Go"
+        assert phrase_template == "The word is hello. The word is '{segment}'"
+        return "abc def.", list(range(8))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc",
+        tokens=[],
+    )
+
+    processed = generator._preprocess_segments(
+        [segment], enable_short_sentence_override=True
+    )
+
+    assert processed[0].ssmd_metadata is not None
+    metadata = processed[0].ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["phrase_template"] == "The word is hello. The word is '{segment}'"
+
+
+def test_preprocess_phrase_mode_can_force_neutral_phrase_for_period(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    config = ShortSentenceConfig(
+        resolve_modes={
+            "phrase": PhraseResolveMode(
+                phrase_selection="neutral",
+                neutral_phrase="The word, {segment}, appears here.",
+                end_phrase="The word is hello. The word is '{segment}'",
+            )
+        },
+        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+    )
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        assert segment.text == "Go."
+        assert phrase_template == "The word, {segment}, appears here."
+        return "abc def.", list(range(8))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go.",
+        phonemes="abc",
+        tokens=[],
+    )
+
+    processed = generator._preprocess_segments(
+        [segment], enable_short_sentence_override=True
+    )
+
+    assert processed[0].ssmd_metadata is not None
+    metadata = processed[0].ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["phrase_template"] == "The word, {segment}, appears here."
+
+
+def test_preprocess_randomized_phrase_mode_can_force_end_phrases(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    config = ShortSentenceConfig(
+        resolve_modes={
+            "randomized-phrase": RandomizedPhraseResolveMode(
+                phrase_selection="end",
+                neutral_phrases=["The word, {segment}, appears here."],
+                end_phrases=["The word is hello. The word is '{segment}'"],
+            )
+        },
+        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+    )
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        assert segment.text == "Go"
+        assert phrase_template == "The word is hello. The word is '{segment}'"
+        return "abc option.", list(range(10))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc",
+        tokens=[],
+    )
+
+    processed = generator._preprocess_segments(
+        [segment], enable_short_sentence_override=True
+    )
+
+    assert processed[0].ssmd_metadata is not None
+    metadata = processed[0].ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["phrase_template"] == "The word is hello. The word is '{segment}'"
+
+
 def test_postprocess_phrase_mode_leaves_audio_when_timestamps_are_missing():
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
@@ -452,7 +742,7 @@ def test_phrase_modes_fall_back_to_wrap_once_without_timestamp_output(
     assert captured.out.count("Falling back to wrap mode for this run.") == 1
 
 
-def test_postprocess_phrase_mode_cuts_to_nearest_vad_quiet_runs():
+def test_postprocess_phrase_mode_cuts_with_default_energy_valley():
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
@@ -480,7 +770,7 @@ def test_postprocess_phrase_mode_cuts_to_nearest_vad_quiet_runs():
                 "has_left_context": True,
                 "has_right_context": True,
                 "previous_token_end_ts": 100 / 24000,
-                "next_token_start_ts": 1300 / 24000,
+                "next_token_start_ts": 1600 / 24000,
                 "target_start_ts": 700 / 24000,
                 "target_end_ts": 900 / 24000,
             }
@@ -494,7 +784,7 @@ def test_postprocess_phrase_mode_cuts_to_nearest_vad_quiet_runs():
     assert np.array_equal(processed[0].processed_audio, audio[600:1080])
 
 
-def test_postprocess_randomized_phrase_mode_uses_vad_quiet_runs():
+def test_postprocess_randomized_phrase_mode_uses_default_energy_valley():
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
@@ -522,7 +812,7 @@ def test_postprocess_randomized_phrase_mode_uses_vad_quiet_runs():
                 "has_left_context": True,
                 "has_right_context": True,
                 "previous_token_end_ts": 100 / 24000,
-                "next_token_start_ts": 1300 / 24000,
+                "next_token_start_ts": 1600 / 24000,
                 "target_start_ts": 700 / 24000,
                 "target_end_ts": 900 / 24000,
             }
@@ -849,3 +1139,90 @@ def test_prepare_phrase_audio_falls_back_to_wrap_when_cut_is_uncertain(
     assert metadata["fallback_used"] == "wrap"
     assert metadata["cut_applied"] is True
     assert "falling back to wrap mode" in caplog.text
+
+
+def test_prepare_phrase_audio_tries_phrase_fallbacks_before_wrap(
+    monkeypatch,
+    caplog,
+):
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    phrase_audio = np.ones(240, dtype=np.float32)
+    retry_audio = np.full(240, 0.25, dtype=np.float32)
+    cut_retry_audio = np.full(120, 0.75, dtype=np.float32)
+
+    def fake_cut(audio: np.ndarray, metadata: dict[str, object]):
+        _ = audio
+        if metadata.get("phrase_template") == "Retry two {segment}":
+            return cut_retry_audio
+        return None
+
+    def fake_retry(
+        segment: PhonemeSegment,
+        phrase_template: str,
+        base_metadata: dict[str, object],
+    ):
+        _ = segment, base_metadata
+        return short_sentence_handler.ShortSentenceApplication(
+            phonemes=f"phonemes for {phrase_template}",
+            tokens=[len(phrase_template)],
+            metadata={
+                "kind": "phrase",
+                "phrase_template": phrase_template,
+                "timing_tokens": [],
+            },
+        )
+
+    def fake_run_onnx(phonemes: str, voice_style: np.ndarray, speed: float):
+        _ = phonemes, voice_style, speed
+        return retry_audio, np.array([1.0, 1.0, 1.0], dtype=np.float32)
+
+    monkeypatch.setattr(
+        "pykokoro.audio_generator.cut_short_sentence_phrase_audio",
+        fake_cut,
+    )
+    monkeypatch.setattr(
+        "pykokoro.audio_generator.build_short_sentence_phrase_retry",
+        fake_retry,
+    )
+    monkeypatch.setattr(generator, "_run_onnx", fake_run_onnx)
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="phrase",
+        tokens=[1, 2, 3],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "phrase",
+                "phrase_template": "Primary {segment}",
+                "phrase_fallback_templates": [
+                    "Retry one {segment}",
+                    "Retry two {segment}",
+                ],
+                "fallback_phonemes": "wrap",
+                "fallback_tokens": [4],
+            }
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pykokoro.audio_generator"):
+        audio = generator._prepare_short_sentence_phrase_audio(
+            segment,
+            phrase_audio,
+            voice_style=np.zeros((16, 256), dtype=np.float32),
+            speed=1.0,
+        )
+
+    assert np.array_equal(audio, cut_retry_audio)
+    assert segment.phonemes == "phonemes for Retry two {segment}"
+    assert segment.tokens == [len("Retry two {segment}")]
+    metadata = segment.ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["fallback_used"] == "phrase"
+    assert metadata["cut_applied"] is True
+    assert metadata["phrase_template"] == "Retry two {segment}"
+    assert "using fallback phrase 'Retry two {segment}'" in caplog.text

@@ -568,12 +568,44 @@ res = pipe.run("Why?")
 - `min_phoneme_length=5`: Segments below this token count are wrapped
 - `phoneme_pretext="—"`: Phoneme context added before and after short segments
 - `enabled=True`: Short-sentence handling is enabled by default
+- `phrase_fallback_tries=3`: Phrase modes try up to three alternate phrase
+  templates before falling back to wrap mode when a cut lacks confident boundaries
+- Phrase-based modes use the `energy-valley` cutter by default. The single neutral
+  phrase defaults to `The conversation stopped, {segment}, before someone answered.`;
+  the single end phrase defaults to `The conversation stopped after one last reply:
+  {segment}`.
+
+Phrase-based modes choose neutral or end-context templates automatically from the
+segment text by default. To force one family for all short segments, set
+`phrase_selection` on the phrase resolve mode:
+
+Phrase-based short-sentence handling can significantly slow down processing because
+it may synthesize extra context phrases and fallback candidates, but it usually
+improves the audio for very short segments much more than simple phoneme wrapping.
+
+```python
+from pykokoro.short_sentence_handler import (
+    PhraseResolveMode,
+    ShortSentenceConfig,
+    ShortSentenceInterval,
+)
+
+short_sentence_config = ShortSentenceConfig(
+    resolve_modes={
+        "phrase": PhraseResolveMode(
+            phrase_selection="end",  # "auto", "neutral", or "end"
+        )
+    },
+    intervals=[ShortSentenceInterval("short", 10, "phrase")],
+)
+```
 
 **Voice Recommendation:**
 
-For better short-sentence handling, prefer these voices in order: `bm_fable`, `af_nova`,
-`af_sky`, `am_onyx`, `bf_isabella`, `bf_alice`, `am_echo`, `af_aoede`, `af_bella`,
-`af_alloy`, `am_puck`, `bm_lewis`, `am_fenrir`, `am_santa`, and `bf_emma`.
+For phrase-based short-sentence handling with the default `energy-valley` cutter,
+prefer these voices in order: `am_santa`, `af_nicole`, `bm_lewis`, `bm_george`,
+`af_bella`, `am_echo`, `af_sky`, `af_sarah`, `bm_fable`, `af_heart`, `am_michael`,
+`af_alloy`, `af_nova`, `bf_isabella`, and `am_adam`.
 
 **Disabling Short Sentence Handling:**
 

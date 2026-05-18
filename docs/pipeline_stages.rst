@@ -217,6 +217,9 @@ skip empty segments, and apply short-sentence handling.
 
 * ``short_sentence_config`` controls defaults for short sentence handling.
 * ``generation.enable_short_sentence`` can override the config per run.
+* Phrase-based short-sentence modes may be significantly slower because they can
+  synthesize extra context phrases and fallback candidates, but they usually
+  produce much better audio for very short segments than simple wrapping.
 
 Onnx audio generation
 ~~~~~~~~~~~~~~~~~~~~~

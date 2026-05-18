@@ -9,13 +9,14 @@ import soundfile as sf
 from pykokoro import KokoroPipeline, PipelineConfig
 from pykokoro.generation_config import GenerationConfig
 from pykokoro.short_sentence_handler import (
+    PhraseSelection,
     PhraseResolveMode,
     RandomizedPhraseResolveMode,
     ShortSentenceConfig,
     ShortSentenceInterval,
 )
 
-VOICE = "bf_lily"
+VOICE = "af_bella"
 LANG = "en-us"
 SPEED = 0.83
 TEST_SENTENCES = [
@@ -29,6 +30,7 @@ TEST_SENTENCES = [
     "Chapter IV.",
     "Hermione.",
 ]
+DIRECT_COMPARISON_SENTENCES = ["Yes!", "Hermione."]
 OUTPUT_FILE = "short_sentence_randomized_demo.wav"
 
 
@@ -38,11 +40,16 @@ def print_separator(title: str) -> None:
     print("=" * 70)
 
 
-def single_phrase_config(template: str) -> ShortSentenceConfig:
+def single_phrase_config(
+    template: str,
+    *,
+    phrase_selection: PhraseSelection = "auto",
+) -> ShortSentenceConfig:
     """Force one phrase template for every input in a comparison block."""
     return ShortSentenceConfig(
         resolve_modes={
             "phrase": PhraseResolveMode(
+                phrase_selection=phrase_selection,
                 neutral_phrase=template,
                 end_phrase=template,
                 cutter="energy-valley",
@@ -52,11 +59,16 @@ def single_phrase_config(template: str) -> ShortSentenceConfig:
     )
 
 
-def randomized_phrase_config(templates: list[str]) -> ShortSentenceConfig:
+def randomized_phrase_config(
+    templates: list[str],
+    *,
+    phrase_selection: PhraseSelection = "auto",
+) -> ShortSentenceConfig:
     """Force one randomized phrase family for every input in a comparison block."""
     return ShortSentenceConfig(
         resolve_modes={
             "randomized-phrase": RandomizedPhraseResolveMode(
+                phrase_selection=phrase_selection,
                 neutral_phrases=templates,
                 end_phrases=templates,
                 cutter="energy-valley",
@@ -66,6 +78,21 @@ def randomized_phrase_config(templates: list[str]) -> ShortSentenceConfig:
             ShortSentenceInterval("randomized phrases", 40, "randomized-phrase")
         ],
     )
+
+
+def direct_comparison_configs(
+    templates: list[str],
+    *,
+    phrase_selection: PhraseSelection,
+) -> list[tuple[str, ShortSentenceConfig]]:
+    """Build one forced randomized-phrase config per default phrase template."""
+    return [
+        (
+            f"Phrase {index}: {template.replace('{segment}', 'segment')}",
+            randomized_phrase_config([template], phrase_selection=phrase_selection),
+        )
+        for index, template in enumerate(templates, 1)
+    ]
 
 
 def generate(text: str, config: ShortSentenceConfig | None) -> tuple[np.ndarray, int]:
@@ -90,7 +117,10 @@ def main() -> None:
         (
             "Generating using neutral phrases:",
             [
-                ("Using short sentences with a single phrase.", single_phrase_config(single.neutral_phrase)),
+                (
+                    "Using short sentences with a single phrase.",
+                    single_phrase_config(single.neutral_phrase),
+                ),
                 (
                     "Using short sentences with a randomized phrase.",
                     randomized_phrase_config(randomized.neutral_phrases),
@@ -100,9 +130,31 @@ def main() -> None:
         (
             "Generating using end phrases:",
             [
-                ("Using short sentences with a single phrase.", single_phrase_config(single.end_phrase)),
-                ("Using short sentences with a randomized phrase.", randomized_phrase_config(randomized.end_phrases)),
+                (
+                    "Using short sentences with a single phrase.",
+                    single_phrase_config(single.end_phrase),
+                ),
+                (
+                    "Using short sentences with a randomized phrase.",
+                    randomized_phrase_config(randomized.end_phrases),
+                ),
             ],
+        ),
+    ]
+    direct_comparison_groups = [
+        (
+            "Direct comparison, neutral phrases.",
+            direct_comparison_configs(
+                randomized.neutral_phrases,
+                phrase_selection="neutral",
+            ),
+        ),
+        (
+            "Direct comparison, end phrases.",
+            direct_comparison_configs(
+                randomized.end_phrases,
+                phrase_selection="end",
+            ),
         ),
     ]
 
@@ -118,7 +170,10 @@ def main() -> None:
 
     for group_name, modes in groups:
         print_separator(group_name.upper())
-        heading_audio, sample_rate = generate(group_name, ShortSentenceConfig(enabled=False))
+        heading_audio, sample_rate = generate(
+            group_name,
+            ShortSentenceConfig(enabled=False),
+        )
         all_samples.extend([heading_audio, group_pause])
 
         for mode_name, config in modes:
@@ -131,6 +186,35 @@ def main() -> None:
             for text in TEST_SENTENCES:
                 audio, sample_rate = generate(text, config)
                 print(f"  {text!r} -> {len(audio) / sample_rate:.3f}s")
+                all_samples.extend([audio, pause])
+            all_samples.append(group_pause)
+
+    print_separator("DIRECT COMPARISON")
+    heading_audio, sample_rate = generate(
+        "Direct comparison",
+        ShortSentenceConfig(enabled=False),
+    )
+    all_samples.extend([heading_audio, group_pause])
+
+    for group_name, phrase_configs in direct_comparison_groups:
+        print_separator(group_name.upper())
+        heading_audio, sample_rate = generate(
+            group_name,
+            ShortSentenceConfig(enabled=False),
+        )
+        all_samples.extend([heading_audio, group_pause])
+
+        for text in DIRECT_COMPARISON_SENTENCES:
+            print(f"\n{text}:")
+            text_heading_audio, sample_rate = generate(
+                text,
+                ShortSentenceConfig(enabled=False),
+            )
+            all_samples.extend([text_heading_audio, pause])
+
+            for phrase_name, config in phrase_configs:
+                audio, sample_rate = generate(text, config)
+                print(f"  {phrase_name} -> {len(audio) / sample_rate:.3f}s")
                 all_samples.extend([audio, pause])
             all_samples.append(group_pause)
 

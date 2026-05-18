@@ -16,6 +16,7 @@ from .prosody import apply_prosody
 from .short_sentence_handler import (
     SHORT_SENTENCE_META_KEY,
     apply_short_sentence_mode,
+    build_short_sentence_phrase_retry,
     cut_short_sentence_phrase_audio,
 )
 from .tokenizer import Tokenizer
@@ -554,6 +555,15 @@ class AudioGenerator:
             short_sentence_metadata["cut_applied"] = True
             return cut_audio
 
+        retry_audio = self._try_short_sentence_phrase_fallbacks(
+            segment,
+            short_sentence_metadata,
+            voice_style,
+            speed,
+        )
+        if retry_audio is not None:
+            return retry_audio
+
         fallback_phonemes = short_sentence_metadata.get("fallback_phonemes")
         if not isinstance(fallback_phonemes, str) or not fallback_phonemes.strip():
             logger.warning(
@@ -578,6 +588,65 @@ class AudioGenerator:
         ):
             segment.tokens = fallback_tokens
         return fallback_audio
+
+    def _try_short_sentence_phrase_fallbacks(
+        self,
+        segment: PhonemeSegment,
+        short_sentence_metadata: dict[str, object],
+        voice_style: np.ndarray,
+        speed: float,
+    ) -> np.ndarray | None:
+        templates = short_sentence_metadata.get("phrase_fallback_templates")
+        if not isinstance(templates, list):
+            return None
+
+        used_templates = {
+            template
+            for template in [short_sentence_metadata.get("phrase_template")]
+            if isinstance(template, str)
+        }
+        for template in templates:
+            if not isinstance(template, str) or not template.strip():
+                continue
+            if template in used_templates:
+                continue
+            used_templates.add(template)
+
+            retry = build_short_sentence_phrase_retry(
+                segment,
+                template,
+                short_sentence_metadata,
+            )
+            if retry is None or retry.metadata is None:
+                continue
+
+            retry_audio, pred_dur = self._run_onnx(retry.phonemes, voice_style, speed)
+            timing_tokens = retry.metadata.get("timing_tokens")
+            if pred_dur is not None and isinstance(timing_tokens, list):
+                timestamped = _join_timestamps(timing_tokens, pred_dur)
+                populate_short_sentence_boundary_metadata(retry.metadata, timestamped)
+
+            cut_audio = cut_short_sentence_phrase_audio(retry_audio, retry.metadata)
+            if cut_audio is None:
+                continue
+
+            original_template = short_sentence_metadata.get("phrase_template")
+            logger.warning(
+                "Short sentence phrase cut for '%s' lacked confident boundaries; "
+                "using fallback phrase '%s' instead of '%s'.",
+                segment.text[:50],
+                template,
+                original_template if isinstance(original_template, str) else "",
+            )
+            short_sentence_metadata.clear()
+            short_sentence_metadata.update(retry.metadata)
+            short_sentence_metadata["cut_applied"] = True
+            short_sentence_metadata["fallback_used"] = "phrase"
+            segment.phonemes = retry.phonemes
+            segment.tokens = retry.tokens
+            return cut_audio
+
+        return None
 
     def _postprocess_audio_segments(
         self, segments: list[PhonemeSegment], trim_silence: bool
