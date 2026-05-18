@@ -447,13 +447,15 @@ def test_phrase_modes_fall_back_to_wrap_once_without_timestamp_output(
     assert captured.out.count("Falling back to wrap mode for this run.") == 1
 
 
-def test_postprocess_randomized_phrase_mode_cuts_from_target_timestamps():
+def test_postprocess_phrase_mode_cuts_to_directional_quiet_samples():
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
         tokenizer=cast(Any, tokenizer),
     )
-    audio = np.arange(100, dtype=np.float32)
+    audio = np.ones(100, dtype=np.float32)
+    audio[8] = 0.0
+    audio[31] = 0.0
     segment = PhonemeSegment(
         id="seg_1",
         segment_id="seg_1",
@@ -463,7 +465,7 @@ def test_postprocess_randomized_phrase_mode_cuts_from_target_timestamps():
         tokens=[],
         ssmd_metadata={
             SHORT_SENTENCE_META_KEY: {
-                "kind": "randomized-phrase",
+                "kind": "phrase",
                 "target_start_ts": 10 / 24000,
                 "target_end_ts": 30 / 24000,
             }
@@ -474,7 +476,7 @@ def test_postprocess_randomized_phrase_mode_cuts_from_target_timestamps():
     processed = generator._postprocess_audio_segments([segment], trim_silence=False)
 
     assert processed[0].processed_audio is not None
-    assert np.array_equal(processed[0].processed_audio, audio[10:30])
+    assert np.array_equal(processed[0].processed_audio, audio[8:31])
 
 
 def test_generate_logs_randomized_phrase_target_timestamps(capsys):

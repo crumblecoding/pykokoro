@@ -30,7 +30,7 @@ import soundfile as sf
 from pykokoro import KokoroPipeline, PipelineConfig
 from pykokoro.generation_config import GenerationConfig
 from pykokoro.short_sentence_handler import (
-    RandomizedPhraseResolveMode,
+    PhraseResolveMode,
     ShortSentenceConfig,
     ShortSentenceInterval,
 )
@@ -55,8 +55,8 @@ TEST_SENTENCES = [
     "What?",
     "Don't!",
     "One … step. In front.",
-    "thing on her chest.",
     "Of.",
+    "The other."
 ]
 
 # Voice to use
@@ -147,7 +147,7 @@ def main():
         print(f"\nText: '{text}' ({phoneme_count} phonemes)")
 
         # Test with context-prepending enabled (default)
-        config_enabled = randomized_phrase_short_sentence_config()
+        config_enabled = neutral_phrase_short_sentence_config()
 
         # Test with context-prepending disabled
         config_disabled = ShortSentenceConfig(enabled=False)
@@ -220,12 +220,17 @@ def main():
     print("Listen to the WAV file to hear the difference!")
     print("=" * 70)
 
-def randomized_phrase_short_sentence_config() -> ShortSentenceConfig:
+def neutral_phrase_short_sentence_config() -> ShortSentenceConfig:
     """Use phrase generation + cutting for short clauses in this demo."""
     return ShortSentenceConfig(
-        resolve_modes={"randomized-phrase": RandomizedPhraseResolveMode()},
+        resolve_modes={
+            "phrase": PhraseResolveMode(
+                neutral_phrase="The word, {segment}, appears here.",
+                end_phrase="The word, {segment}, appears here.",
+            )
+        },
         intervals=[
-            ShortSentenceInterval("demo short phrase", 20, "randomized-phrase"),
+            ShortSentenceInterval("demo short phrase", 20, "phrase"),
         ],
     )
 

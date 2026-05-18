@@ -47,8 +47,8 @@ class PhraseResolveMode:
     """Configuration for phrase generation and cutting."""
 
     kind: Literal["phrase"] = "phrase"
-    neutral_phrase: str = "The word, {segment}, appears here."
-    end_phrase: str = "The word is hello. The word is '{segment}'"
+    neutral_phrase: str = "He paused for a long time. … {segment} … Then he continued."
+    end_phrase: str = "The word is hello. The word is —'{segment}'"
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
 
@@ -60,9 +60,13 @@ class RandomizedPhraseResolveMode:
     kind: Literal["randomized-phrase"] = "randomized-phrase"
     neutral_phrases: list[str] = field(
         default_factory=lambda: [
-            "The word, {segment}, appears here.",
-            "The line says, {segment}, before continuing.",
-            "The entry reads, {segment}, in this place.",
+            "He paused for a long time. … {segment} … Then he continued."
+            #"He paused for a long time. … {segment} Then he continued."
+            "He paused. … {segment} Then he continued.",
+           # "The transcript paused…: {segment}; the next entry followed.",
+            "She looked up…: {segment}. The conversation resumed."
+            #"The line ended: {segment}; the next line began.",
+            "The line ended…: {segment}; the next line began."
         ]
     )
     end_phrases: list[str] = field(
@@ -354,8 +358,21 @@ def cut_short_sentence_phrase_audio(
     if isinstance(target_start_ts, (int, float)) and isinstance(
         target_end_ts, (int, float)
     ):
-        start = max(0, int(float(target_start_ts) * SAMPLE_RATE))
-        end = min(len(audio), int(float(target_end_ts) * SAMPLE_RATE))
+        target_start = max(0, int(float(target_start_ts) * SAMPLE_RATE))
+        target_end = min(len(audio), int(float(target_end_ts) * SAMPLE_RATE))
+        threshold = float(metadata.get("silence_threshold", 1e-4))
+        start = _nearest_directional_quiet_sample(
+            audio,
+            target_start,
+            direction="before",
+            threshold=threshold,
+        )
+        end = _nearest_directional_quiet_sample(
+            audio,
+            target_end,
+            direction="after",
+            threshold=threshold,
+        )
         if end > start:
             return audio[start:end]
 
@@ -392,6 +409,22 @@ def cut_short_sentence_phrase_audio(
 
     cut_start, _ = min(runs, key=lambda run: abs(run[0] - target))
     return audio[: max(1, cut_start)]
+
+
+def _nearest_directional_quiet_sample(
+    audio: np.ndarray,
+    anchor: int,
+    *,
+    direction: Literal["before", "after"],
+    threshold: float,
+) -> int:
+    """Find the nearest near-zero sample on the semantically correct side."""
+    if direction == "before":
+        candidates = np.flatnonzero(np.abs(audio[: anchor + 1]) <= threshold)
+        return int(candidates[-1]) if candidates.size else anchor
+
+    candidates = np.flatnonzero(np.abs(audio[anchor:]) <= threshold)
+    return anchor + int(candidates[0]) if candidates.size else anchor
 
 
 def _select_phrase_template(segment_text: str, mode: ShortSentenceResolveMode) -> str:
