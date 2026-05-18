@@ -26,21 +26,17 @@ REQUIRE_BEFORE_BOUNDARY = True
 REQUIRE_AFTER_BOUNDARY = True
 
 PHRASE_CANDIDATES = [
+    "She looked up…: {segment}. The conversation resumed.",
     "The room fell quiet … {segment} … afterward, they moved on.",
-    "He waited a moment — {segment} — then spoke again.",
+    "He paused…: {segment}…? … Is that you?",
+    "He paused…: {segment}? Is that you?",
+    "He paused. … {segment} Then he continued.",
+    "The student thought, {segment}, before the teacher continued.",
+    "The transcript paused…: {segment}; the next entry followed.",
+    "The hallway went quiet; {segment}; then footsteps resumed.",
+    "The response stopped — {segment} — then the prompt continued.",
     "The clerk paused, {segment}, before the next name was called.",
     "The narrator paused — {segment} — then the chapter continued.",
-    "The student thought, {segment}, before the teacher continued.",
-    "The response stopped — {segment} — then the prompt continued.",
-    "The hallway went quiet; {segment}; then footsteps resumed.",
-    "He paused for a long time. … {segment} … Then he continued.",
-    "He paused. … {segment} Then he continued.",
-    "The transcript paused…: {segment}; the next entry followed.",
-    "She looked up…: {segment}. The conversation resumed.",
-    "The line ended: {segment}; the next line began.",
-    "The line ended…: {segment}; the next line began.",
-    "The letter paused, {segment}, before the final line."
-    "The conversation stopped, {segment}, before someone answered."
 ]
 
 # Keep this in sync with examples/short_sentence_demo.py.
@@ -58,6 +54,17 @@ DEMO_SEGMENTS = [
     "One … step. In front.",
     "Of.",
     "The other.",
+    "Ah.",
+    "Hush.",
+    "Go on.",
+    "Not yet.",
+    "I know.",
+    "Mm-hm.",
+    "Mr. Vale.",
+    "St. John.",
+    "'Tis.",
+    "Chapter IV.",
+    "Hermione."
 ]
 
 
@@ -85,7 +92,7 @@ class CandidateScore:
 
 
 def main() -> None:
-    kokoro = Kokoro()
+    kokoro = Kokoro(provider="cuda")
     try:
         kokoro._init_kokoro()
         assert kokoro._session is not None
@@ -152,6 +159,7 @@ def main() -> None:
 
 
 def print_scores(title: str, scores: list[CandidateScore]) -> None:
+    print("##########################")
     print(title)
     for index, score in enumerate(scores[:5], start=1):
         print(

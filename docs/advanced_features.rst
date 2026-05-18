@@ -639,9 +639,10 @@ configurable phoneme pretext before synthesis. You can tune settings via
        phoneme_pretext="…",
    )
 
-For short-sentence workloads, avoid voices that scored below 100% success in
-short-sentence handling tests: ``af_bella``, ``af_heart``, ``af_jessica``,
-``af_nicole``, ``af_river``, ``am_eric``, and ``am_liam``.
+For better short-sentence handling, prefer these voices in order:
+``bm_fable``, ``af_nova``, ``af_sky``, ``am_onyx``, ``bf_isabella``,
+``bf_alice``, ``am_echo``, ``af_aoede``, ``af_bella``, ``af_alloy``,
+``am_puck``, ``bm_lewis``, ``am_fenrir``, ``am_santa``, and ``bf_emma``.
 
 Configuration Management
 ------------------------

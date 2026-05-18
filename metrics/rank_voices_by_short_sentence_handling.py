@@ -11,7 +11,10 @@ import numpy as np
 from pykokoro.audio_generator import _join_timestamps
 from pykokoro.constants import SAMPLE_RATE
 from pykokoro.onnx_backend import Kokoro
-from pykokoro.short_sentence_handler import phonemize_short_sentence_phrase
+from pykokoro.short_sentence_handler import (
+    PhraseResolveMode,
+    phonemize_short_sentence_phrase,
+)
 from pykokoro.trim import energy_based_vad
 from pykokoro.types import PhonemeSegment
 
@@ -22,8 +25,10 @@ ENERGY_THRESHOLD = 0.05
 MIN_SILENCE_SECONDS = 0.02
 MAX_BOUNDARY_GAP_SECONDS = 1.00
 VOICE_FILTER_PREFIX = ("af_", "am_", "bf_", "bm_")
-PHRASE_CANDIDATES = [
-    "He paused for a long time. … {segment} … Then he continued.",
+DEFAULT_PHRASE_MODE = PhraseResolveMode()
+DEFAULT_PHRASES = [
+    DEFAULT_PHRASE_MODE.neutral_phrase,
+    DEFAULT_PHRASE_MODE.end_phrase,
 ]
 DEMO_SEGMENTS = [
     "Hi!",
@@ -36,9 +41,8 @@ DEMO_SEGMENTS = [
     "Stop!",
     "What?",
     "Don't!",
-    "One … step. In front.",
     "Of.",
-    "The other.",
+    "Alexander!?",
 ]
 
 
@@ -56,7 +60,7 @@ class VoiceScore:
 
 
 def main() -> None:
-    kokoro = Kokoro()
+    kokoro = Kokoro(provider="cuda")
     try:
         kokoro._init_kokoro()
         assert kokoro._session is not None
@@ -72,7 +76,7 @@ def main() -> None:
         for voice in english_voices(kokoro.get_voices()):
             score = score_voice(
                 voice,
-                phrases=PHRASE_CANDIDATES,
+                phrases=DEFAULT_PHRASES,
                 audio_generator=kokoro._audio_generator,
                 voice_style=kokoro.resolve_voice_style(voice),
             )

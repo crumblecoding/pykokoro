@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -447,15 +448,21 @@ def test_phrase_modes_fall_back_to_wrap_once_without_timestamp_output(
     assert captured.out.count("Falling back to wrap mode for this run.") == 1
 
 
-def test_postprocess_phrase_mode_cuts_to_directional_quiet_samples():
+def test_postprocess_phrase_mode_cuts_to_nearest_vad_quiet_runs():
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
         tokenizer=cast(Any, tokenizer),
     )
-    audio = np.ones(100, dtype=np.float32)
-    audio[8] = 0.0
-    audio[31] = 0.0
+    audio = np.concatenate(
+        [
+            np.ones(120, dtype=np.float32),
+            np.zeros(480, dtype=np.float32),
+            np.ones(480, dtype=np.float32),
+            np.zeros(480, dtype=np.float32),
+            np.ones(120, dtype=np.float32),
+        ]
+    )
     segment = PhonemeSegment(
         id="seg_1",
         segment_id="seg_1",
@@ -466,8 +473,8 @@ def test_postprocess_phrase_mode_cuts_to_directional_quiet_samples():
         ssmd_metadata={
             SHORT_SENTENCE_META_KEY: {
                 "kind": "phrase",
-                "target_start_ts": 10 / 24000,
-                "target_end_ts": 30 / 24000,
+                "target_start_ts": 700 / 24000,
+                "target_end_ts": 900 / 24000,
             }
         },
         raw_audio=audio,
@@ -476,10 +483,48 @@ def test_postprocess_phrase_mode_cuts_to_directional_quiet_samples():
     processed = generator._postprocess_audio_segments([segment], trim_silence=False)
 
     assert processed[0].processed_audio is not None
-    assert np.array_equal(processed[0].processed_audio, audio[8:31])
+    assert np.array_equal(processed[0].processed_audio, audio[600:1080])
 
 
-def test_generate_logs_randomized_phrase_target_timestamps(capsys):
+def test_postprocess_randomized_phrase_mode_uses_vad_quiet_runs():
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    audio = np.concatenate(
+        [
+            np.ones(120, dtype=np.float32),
+            np.zeros(480, dtype=np.float32),
+            np.ones(480, dtype=np.float32),
+            np.zeros(480, dtype=np.float32),
+            np.ones(120, dtype=np.float32),
+        ]
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc def.",
+        tokens=[],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "randomized-phrase",
+                "target_start_ts": 700 / 24000,
+                "target_end_ts": 900 / 24000,
+            }
+        },
+        raw_audio=audio,
+    )
+
+    processed = generator._postprocess_audio_segments([segment], trim_silence=False)
+
+    assert processed[0].processed_audio is not None
+    assert np.array_equal(processed[0].processed_audio, audio[600:1080])
+
+
+def test_generate_logs_randomized_phrase_target_timestamps(caplog, capsys):
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
         session=cast(Any, TimestampSession()),
@@ -513,18 +558,20 @@ def test_generate_logs_randomized_phrase_target_timestamps(capsys):
         },
     )
 
-    generator._generate_raw_audio_segments(
-        [segment],
-        voice_style=np.zeros((16, 256), dtype=np.float32),
-        speed=1.0,
-        voice_resolver=None,
-    )
+    with caplog.at_level(logging.DEBUG, logger="pykokoro.audio_generator"):
+        generator._generate_raw_audio_segments(
+            [segment],
+            voice_style=np.zeros((16, 256), dtype=np.float32),
+            speed=1.0,
+            voice_resolver=None,
+        )
 
     captured = capsys.readouterr()
-    assert "segment='Go'" in captured.out
-    assert "token='Go'" in captured.out
-    assert "start=" in captured.out
-    assert "end=" in captured.out
+    assert captured.out == ""
+    assert "segment='Go'" in caplog.text
+    assert "token='Go'" in caplog.text
+    assert "start=" in caplog.text
+    assert "end=" in caplog.text
     metadata = segment.ssmd_metadata[SHORT_SENTENCE_META_KEY]
     assert metadata["target_start_ts"] == 0.0625
     assert metadata["target_end_ts"] == 0.175

@@ -532,8 +532,8 @@ See `examples/say_as_demo.py` for comprehensive examples.
 #### 4. Automatic Short Sentence Handling
 
 When processing text, very short sentences (like "Why?" or "Go!") can produce poor audio
-quality when processed individually (only 3-8 phonemes each). Pykokoro can add
-phoneme context around those short segments before synthesis.
+quality when processed individually (only 3-8 phonemes each). Pykokoro can add phoneme
+context around those short segments before synthesis.
 
 **How It Works:**
 
@@ -571,9 +571,9 @@ res = pipe.run("Why?")
 
 **Voice Recommendation:**
 
-For short-sentence workloads, avoid voices that scored below 100% success in short-sentence
-handling tests: `af_bella`, `af_heart`, `af_jessica`, `af_nicole`, `af_river`, `am_eric`,
-and `am_liam`.
+For better short-sentence handling, prefer these voices in order: `bm_fable`, `af_nova`,
+`af_sky`, `am_onyx`, `bf_isabella`, `bf_alice`, `am_echo`, `af_aoede`, `af_bella`,
+`af_alloy`, `am_puck`, `bm_lewis`, `am_fenrir`, `am_santa`, and `bf_emma`.
 
 **Disabling Short Sentence Handling:**
 

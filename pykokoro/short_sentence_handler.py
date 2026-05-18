@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from .constants import MAX_PHONEME_LENGTH, SAMPLE_RATE, SUPPORTED_LANGUAGES
+from .trim import energy_based_vad
 
 if TYPE_CHECKING:
     from .types import PhonemeSegment
@@ -47,8 +48,10 @@ class PhraseResolveMode:
     """Configuration for phrase generation and cutting."""
 
     kind: Literal["phrase"] = "phrase"
-    neutral_phrase: str = "He paused for a long time. … {segment} … Then he continued."
-    end_phrase: str = "The word is hello. The word is —'{segment}'"
+    neutral_phrase: str = "She looked up…: {segment}. The conversation resumed."
+    end_phrase: str = "The message on the screen changed to {segment}"
+    frame_duration_ms: int = 5
+    energy_threshold: float = 0.05
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
 
@@ -60,25 +63,43 @@ class RandomizedPhraseResolveMode:
     kind: Literal["randomized-phrase"] = "randomized-phrase"
     neutral_phrases: list[str] = field(
         default_factory=lambda: [
-            "He paused for a long time. … {segment} … Then he continued.",
-            "He paused. … {segment} Then he continued.",
-           # "The transcript paused…: {segment}; the next entry followed.",
             "She looked up…: {segment}. The conversation resumed.",
-            #"The line ended: {segment}; the next line began.",
-            "The line ended…: {segment}; the next line began.",
-            "The letter paused, {segment}, before the final line."
-            "The conversation stopped, {segment}, before someone answered."
+            "The room fell quiet … {segment} … afterward, they moved on.",
+            "He paused…: {segment}…? … Is that you?",
+            "He paused…: {segment}? Is that you?",
+            "He paused. … {segment} Then he continued.",
+            "The student thought, {segment}, before the teacher continued.",
+            "The transcript paused…: {segment}; the next entry followed.",
+            "The hallway went quiet; {segment}; then footsteps resumed.",
+            "The response stopped — {segment} — then the prompt continued.",
+            "The clerk paused, {segment}, before the next name was called.",
+            "The narrator paused — {segment} — then the chapter continued.",
         ]
     )
     end_phrases: list[str] = field(
         default_factory=lambda: [
-            "The judge asked for a final answer. {segment}",
+            "The message on the screen changed to {segment}",
+            "The line in the script ends with, {segment}",
             "The recording trails off after the words, … {segment}",
+            "The message was brief — just {segment}",
+            "Is that … {segment}?",
+            "The transcript closes with the words, {segment}",
+            "The lesson ended when the teacher asked, {segment}",
+            "The letter closed with this unfinished thought — {segment}",
+            "At last, the guide called out, {segment}",
+            "The report concludes with this note: {segment}",
+            "The note on the desk simply said, {segment}",
+            "The final caption on the screen read, {segment}",
+            "The teacher waited for a response. {segment}",
+            "The announcement ended like this: {segment}",
+            "There was a pause before the answer came: {segment}",
             "The final word is hello. The final word is '{segment}'",
-            "The final word is hello. The final word is … '{segment}'",
-            "The caller left one final message…: {segment}"
+            "The host asked again, more quietly this time: {segment}",
+            "The conversation stopped after one last reply: {segment}",
         ]
     )
+    frame_duration_ms: int = 5
+    energy_threshold: float = 0.05
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
 
@@ -363,21 +384,16 @@ def cut_short_sentence_phrase_audio(
     ):
         target_start = max(0, int(float(target_start_ts) * SAMPLE_RATE))
         target_end = min(len(audio), int(float(target_end_ts) * SAMPLE_RATE))
-        threshold = float(metadata.get("silence_threshold", 1e-4))
-        start = _nearest_directional_quiet_sample(
+        runs = _quiet_runs(
             audio,
-            target_start,
-            direction="before",
-            threshold=threshold,
+            frame_duration_ms=int(metadata.get("frame_duration_ms", 5)),
+            energy_threshold=float(metadata.get("energy_threshold", 0.05)),
+            min_silence_seconds=float(metadata.get("min_silence_seconds", 0.02)),
         )
-        end = _nearest_directional_quiet_sample(
-            audio,
-            target_end,
-            direction="after",
-            threshold=threshold,
-        )
-        if end > start:
-            return audio[start:end]
+        before = _nearest_run_before(runs, target_start)
+        after = _nearest_run_after(runs, target_end)
+        if before is not None and after is not None and after[0] > before[1]:
+            return audio[before[1] : after[0]]
 
     if kind == "randomized-phrase":
         logger.warning(
@@ -414,20 +430,51 @@ def cut_short_sentence_phrase_audio(
     return audio[: max(1, cut_start)]
 
 
-def _nearest_directional_quiet_sample(
+def _quiet_runs(
     audio: np.ndarray,
-    anchor: int,
     *,
-    direction: Literal["before", "after"],
-    threshold: float,
-) -> int:
-    """Find the nearest near-zero sample on the semantically correct side."""
-    if direction == "before":
-        candidates = np.flatnonzero(np.abs(audio[: anchor + 1]) <= threshold)
-        return int(candidates[-1]) if candidates.size else anchor
+    frame_duration_ms: int,
+    energy_threshold: float,
+    min_silence_seconds: float,
+) -> list[tuple[int, int]]:
+    """Return qualifying quiet runs using the same VAD logic as the metrics scorer."""
+    speech_frames = energy_based_vad(
+        audio,
+        SAMPLE_RATE,
+        frame_duration_ms=frame_duration_ms,
+        energy_threshold=energy_threshold,
+    )
+    quiet_frames = ~speech_frames
+    samples_per_frame = max(1, int(SAMPLE_RATE * frame_duration_ms / 1000))
+    min_frames = max(1, int(min_silence_seconds * 1000 / frame_duration_ms))
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, is_quiet in enumerate(quiet_frames):
+        if is_quiet and start is None:
+            start = index
+        elif not is_quiet and start is not None:
+            if index - start >= min_frames:
+                runs.append((start * samples_per_frame, index * samples_per_frame))
+            start = None
+    if start is not None and len(quiet_frames) - start >= min_frames:
+        runs.append((start * samples_per_frame, len(audio)))
+    return runs
 
-    candidates = np.flatnonzero(np.abs(audio[anchor:]) <= threshold)
-    return anchor + int(candidates[0]) if candidates.size else anchor
+
+def _nearest_run_before(
+    runs: list[tuple[int, int]],
+    anchor: int,
+) -> tuple[int, int] | None:
+    candidates = [run for run in runs if run[1] <= anchor]
+    return max(candidates, key=lambda run: run[1], default=None)
+
+
+def _nearest_run_after(
+    runs: list[tuple[int, int]],
+    anchor: int,
+) -> tuple[int, int] | None:
+    candidates = [run for run in runs if run[0] >= anchor]
+    return min(candidates, key=lambda run: run[0], default=None)
 
 
 def _select_phrase_template(segment_text: str, mode: ShortSentenceResolveMode) -> str:
@@ -462,6 +509,8 @@ def _build_short_sentence_metadata(
         "original_token_count": original_token_count,
         "generated_token_count": generated_token_count,
         "expected_cut_ratio": max(0.01, min(0.99, expected_cut_ratio)),
+        "frame_duration_ms": mode.frame_duration_ms,
+        "energy_threshold": mode.energy_threshold,
         "silence_threshold": mode.silence_threshold,
         "min_silence_seconds": mode.min_silence_seconds,
     }

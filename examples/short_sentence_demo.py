@@ -43,7 +43,7 @@ from pykokoro.tokenizer import Tokenizer
 
 # Test sentences of varying lengths
 TEST_SENTENCES = [
-    # Very short (will trigger repeat-and-cut)
+    # Very short (will trigger short sentence handling)
     "Hi!",
     "Why?",
     "No.",
@@ -56,8 +56,20 @@ TEST_SENTENCES = [
     "Don't!",
     "One … step. In front.",
     "Of.",
-    "The other."
+    "The other.",
+    "Ah.",
+    "Hush.",
+    "Go on.",
+    "Not yet.",
+    "I know.",
+    "Mm-hm.",
+    "Mr. Vale.",
+    "St. John.",
+    "'Tis.",
+    "Chapter IV.",
+    "Hermione."
 ]
+
 
 # Voice to use
 # Note: Different voices may produce slightly different durations due to varying
@@ -126,19 +138,24 @@ def main():
     )
     tokenizer = Tokenizer()
 
-    all_samples = []
-    all_samples2 = []
+    pretext_samples = []
+    disabled_samples = []
+    neutral_phrase_samples = []
     sample_rate = 24000
 
     pause = np.zeros(int(sample_rate * 0.5), dtype=np.float32)
     # Add announcement and samples to output
     announcement = "With pretexting"
     intro = kokoro.run(announcement).audio
-    all_samples.extend([intro, pause])
+    pretext_samples.extend([intro, pause])
     # Add announcement and samples to output
-    announcement = "Without pretexting"
+    announcement = "Without short sentence handling"
     intro2 = kokoro.run(announcement).audio
-    all_samples2.extend([pause, intro2, pause])
+    disabled_samples.extend([pause, intro2, pause])
+    # Add announcement and samples to output
+    announcement = "With neutral phrase"
+    intro3 = kokoro.run(announcement).audio
+    neutral_phrase_samples.extend([pause, intro3, pause])
 
     # Test each sentence with different configurations
     for text in TEST_SENTENCES:
@@ -146,25 +163,32 @@ def main():
 
         print(f"\nText: '{text}' ({phoneme_count} phonemes)")
 
-        # Test with context-prepending enabled (default)
-        config_enabled = neutral_phrase_short_sentence_config()
+        # Test with phoneme pretext wrapping only
+        config_pretext = pretext_short_sentence_config()
 
-        # Test with context-prepending disabled
+        # Test with short sentence handling disabled
         config_disabled = ShortSentenceConfig(enabled=False)
 
-        # Generate with both configs
-        samples_enabled, sr = test_sentence_with_config(
-            text, config_enabled, "With prepending"
+        # Test with neutral phrase generation + cutting
+        config_neutral_phrase = neutral_phrase_short_sentence_config()
+
+        # Generate with all configs
+        samples_pretext, sr = test_sentence_with_config(
+            text, config_pretext, "With pretexting"
         )
 
         samples_disabled, sr = test_sentence_with_config(
-            text, config_disabled, "Without prepending"
+            text, config_disabled, "Without handling"
         )
-        # Add: intro + enabled version + pause + disabled version + pause
+
+        samples_neutral_phrase, sr = test_sentence_with_config(
+            text, config_neutral_phrase, "With neutral phrase"
+        )
+
         pause = np.zeros(int(sr * 0.1), dtype=np.float32)
-        # all_samples.extend([samples_enabled, pause, samples_disabled, pause])
-        all_samples.extend([samples_enabled, pause])
-        all_samples2.extend([samples_disabled, pause])
+        pretext_samples.extend([samples_pretext, pause])
+        disabled_samples.extend([samples_disabled, pause])
+        neutral_phrase_samples.extend([samples_neutral_phrase, pause])
 
     # Configuration comparison
     print_separator("Configuration Comparison")
@@ -180,7 +204,9 @@ def main():
     # Save combined audio
     print_separator("Saving Combined Audio")
 
-    combined_samples = np.concatenate(all_samples + all_samples2)
+    combined_samples = np.concatenate(
+        disabled_samples + pretext_samples + neutral_phrase_samples
+    )
     output_file = "short_sentence_demo.wav"
     sf.write(output_file, combined_samples, sample_rate)
 
@@ -231,6 +257,15 @@ def neutral_phrase_short_sentence_config() -> ShortSentenceConfig:
         },
         intervals=[
             ShortSentenceInterval("demo short phrase", 20, "phrase"),
+        ],
+    )
+
+
+def pretext_short_sentence_config() -> ShortSentenceConfig:
+    """Use phoneme pretext wrapping for the same demo range as phrase mode."""
+    return ShortSentenceConfig(
+        intervals=[
+            ShortSentenceInterval("demo short pretext", 20, "wrap"),
         ],
     )
 

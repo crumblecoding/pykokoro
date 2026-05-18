@@ -536,8 +536,7 @@ class AudioGenerator:
                 f"start={token.get('start_ts')} "
                 f"end={token.get('end_ts')}"
             )
-            logger.info(message)
-            print(message)
+            logger.debug(message)
 
     def _postprocess_audio_segments(
         self, segments: list[PhonemeSegment], trim_silence: bool
