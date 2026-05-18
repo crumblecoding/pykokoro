@@ -37,6 +37,24 @@ PHRASE_CANDIDATES = [
     "The response stopped — {segment} — then the prompt continued.",
     "The clerk paused, {segment}, before the next name was called.",
     "The narrator paused — {segment} — then the chapter continued.",
+    "The music stopped: {segment}. Then the singer continued.",
+    "The bell rang — {segment}. Then the class resumed.",
+    "The door closed … {segment}. Then the room settled.",
+    "The page turned, {segment}, and the reading continued.",
+    "The screen changed; {segment}; then the next slide appeared.",
+    "The scene ended — {segment} — then the story continued.",
+    "The crowd quieted … {segment} … then the speech resumed.",
+    "The phone went silent: {segment}. Then the caller spoke.",
+    "The radio paused; {segment}; then the broadcast continued.",
+    "The recording stopped — {segment}. Then the next clip played.",
+    "The lesson paused … {segment}. Then the teacher continued.",
+    "The conversation stopped, {segment}, before someone answered.",
+    "The final line ended: {segment}. Then silence followed.",
+    "The word, {segment}, appears here.",
+    "The line says, {segment}, before continuing.",
+    "The entry reads, {segment}, —in this place.",
+    "It could be said, {segment}, —in all its glory—, might have been better.",
+    "He waited a moment, — {segment} — then spoke again."
 ]
 
 # Keep this in sync with examples/short_sentence_demo.py.

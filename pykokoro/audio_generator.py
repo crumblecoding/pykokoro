@@ -492,7 +492,12 @@ class AudioGenerator:
                 segment.phonemes, segment_voice_style, speed
             )
             self._log_short_sentence_timestamps(segment, pred_dur)
-            segment.raw_audio = audio
+            segment.raw_audio = self._prepare_short_sentence_phrase_audio(
+                segment,
+                audio,
+                segment_voice_style,
+                speed,
+            )
 
         return segments
 
@@ -512,20 +517,10 @@ class AudioGenerator:
         if not isinstance(timing_tokens, list):
             return
         timestamped = _join_timestamps(timing_tokens, pred_dur)
-        target_timestamps = [
-            token
-            for token in timestamped
-            if token.get("is_target")
-            and isinstance(token.get("start_ts"), (int, float))
-            and isinstance(token.get("end_ts"), (int, float))
-        ]
-        if target_timestamps:
-            short_sentence_metadata["target_start_ts"] = min(
-                float(token["start_ts"]) for token in target_timestamps
-            )
-            short_sentence_metadata["target_end_ts"] = max(
-                float(token["end_ts"]) for token in target_timestamps
-            )
+        populate_short_sentence_boundary_metadata(
+            short_sentence_metadata,
+            timestamped,
+        )
         for token in timestamped:
             if not token.get("is_target"):
                 continue
@@ -537,6 +532,52 @@ class AudioGenerator:
                 f"end={token.get('end_ts')}"
             )
             logger.debug(message)
+
+    def _prepare_short_sentence_phrase_audio(
+        self,
+        segment: PhonemeSegment,
+        audio: np.ndarray,
+        voice_style: np.ndarray,
+        speed: float,
+    ) -> np.ndarray:
+        """Accept confident phrase cuts or regenerate a wrap fallback."""
+        short_sentence_metadata = (
+            segment.ssmd_metadata or {}
+        ).get(SHORT_SENTENCE_META_KEY)
+        if not isinstance(short_sentence_metadata, dict):
+            return audio
+        if short_sentence_metadata.get("kind") not in {"phrase", "randomized-phrase"}:
+            return audio
+
+        cut_audio = cut_short_sentence_phrase_audio(audio, short_sentence_metadata)
+        if cut_audio is not None:
+            short_sentence_metadata["cut_applied"] = True
+            return cut_audio
+
+        fallback_phonemes = short_sentence_metadata.get("fallback_phonemes")
+        if not isinstance(fallback_phonemes, str) or not fallback_phonemes.strip():
+            logger.warning(
+                "Short sentence phrase cut for '%s' lacked confident boundaries; "
+                "no wrap fallback was available.",
+                segment.text[:50],
+            )
+            return audio
+
+        logger.warning(
+            "Short sentence phrase cut for '%s' lacked confident boundaries; "
+            "falling back to wrap mode.",
+            segment.text[:50],
+        )
+        fallback_audio, _ = self._run_onnx(fallback_phonemes, voice_style, speed)
+        short_sentence_metadata["cut_applied"] = True
+        short_sentence_metadata["fallback_used"] = "wrap"
+        segment.phonemes = fallback_phonemes
+        fallback_tokens = short_sentence_metadata.get("fallback_tokens")
+        if isinstance(fallback_tokens, list) and all(
+            isinstance(token, int) for token in fallback_tokens
+        ):
+            segment.tokens = fallback_tokens
+        return fallback_audio
 
     def _postprocess_audio_segments(
         self, segments: list[PhonemeSegment], trim_silence: bool
@@ -554,8 +595,13 @@ class AudioGenerator:
             short_sentence_metadata = (
                 segment.ssmd_metadata or {}
             ).get(SHORT_SENTENCE_META_KEY)
-            if isinstance(short_sentence_metadata, dict):
-                audio = cut_short_sentence_phrase_audio(audio, short_sentence_metadata)
+            if (
+                isinstance(short_sentence_metadata, dict)
+                and not short_sentence_metadata.get("cut_applied")
+            ):
+                cut_audio = cut_short_sentence_phrase_audio(audio, short_sentence_metadata)
+                if cut_audio is not None:
+                    audio = cut_audio
             if trim_silence:
                 audio, _ = trim_audio(audio)
             segment.processed_audio = self._apply_segment_prosody(audio, segment)
@@ -719,10 +765,71 @@ def _join_timestamps(
         token["start_ts"] = left / divisor
         token_dur = float(durations[i:j].sum().item())
         space_dur = float(durations[j].item()) if whitespace else 0.0
-        left = right + (2 * token_dur) + space_dur
+        speech_end = right + (2 * token_dur)
+        token["speech_end_ts"] = speech_end / divisor
+        left = speech_end + space_dur
         token["end_ts"] = left / divisor
         right = left + space_dur
         i = j + (1 if whitespace else 0)
         timestamped.append(token)
 
     return timestamped
+
+
+def populate_short_sentence_boundary_metadata(
+    metadata: dict[str, object],
+    timestamped: list[dict[str, object]],
+) -> None:
+    """Populate production phrase-cut metadata from timestamped G2P tokens."""
+    target_indices = [
+        index
+        for index, token in enumerate(timestamped)
+        if token.get("is_target")
+        and isinstance(token.get("start_ts"), (int, float))
+        and isinstance(token.get("end_ts"), (int, float))
+    ]
+    if not target_indices:
+        return
+
+    target_tokens = [timestamped[index] for index in target_indices]
+    target_boundary_tokens = [
+        token for token in target_tokens if _is_spoken_token(token)
+    ] or target_tokens
+    metadata["target_start_ts"] = min(
+        float(token["start_ts"]) for token in target_boundary_tokens
+    )
+    metadata["target_end_ts"] = max(
+        float(token.get("speech_end_ts", token["end_ts"]))
+        for token in target_boundary_tokens
+    )
+
+    first_target = min(target_indices)
+    last_target = max(target_indices)
+    previous_tokens = [
+        token
+        for token in timestamped[:first_target]
+        if _is_spoken_token(token)
+        and isinstance(token.get("speech_end_ts", token.get("end_ts")), (int, float))
+    ]
+    next_tokens = [
+        token
+        for token in timestamped[last_target + 1 :]
+        if _is_spoken_token(token)
+        and isinstance(token.get("start_ts"), (int, float))
+    ]
+    metadata["has_left_context"] = bool(previous_tokens)
+    metadata["has_right_context"] = bool(next_tokens)
+    if previous_tokens:
+        previous_end = previous_tokens[-1].get(
+            "speech_end_ts",
+            previous_tokens[-1]["end_ts"],
+        )
+        metadata["previous_token_end_ts"] = float(previous_end)
+    if next_tokens:
+        metadata["next_token_start_ts"] = float(next_tokens[0]["start_ts"])
+
+
+def _is_spoken_token(token: dict[str, object]) -> bool:
+    """Return whether a token corresponds to spoken lexical content."""
+    text = str(token.get("text") or "")
+    return any(char.isalnum() for char in text)

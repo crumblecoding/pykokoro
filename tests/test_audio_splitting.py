@@ -7,7 +7,11 @@ from typing import Any, cast
 import numpy as np
 
 import pykokoro.short_sentence_handler as short_sentence_handler
-from pykokoro.audio_generator import AudioGenerator
+from pykokoro.audio_generator import (
+    AudioGenerator,
+    _join_timestamps,
+    populate_short_sentence_boundary_metadata,
+)
 from pykokoro.constants import MAX_PHONEME_LENGTH
 from pykokoro.short_sentence_handler import (
     PhraseResolveMode,
@@ -362,7 +366,7 @@ def test_preprocess_phrase_mode_uses_end_phrase_for_period(monkeypatch):
     assert metadata["phrase_template"] == "The word is hello. The word is '{segment}'"
 
 
-def test_postprocess_phrase_mode_cuts_at_quiet_run_near_expected_ratio():
+def test_postprocess_phrase_mode_leaves_audio_when_timestamps_are_missing():
     tokenizer = DummyTokenizer(factor=1)
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
@@ -396,7 +400,7 @@ def test_postprocess_phrase_mode_cuts_at_quiet_run_near_expected_ratio():
     processed = generator._postprocess_audio_segments([segment], trim_silence=False)
 
     assert processed[0].processed_audio is not None
-    assert len(processed[0].processed_audio) == 10
+    assert len(processed[0].processed_audio) == len(audio)
 
 
 def test_phrase_modes_fall_back_to_wrap_once_without_timestamp_output(
@@ -473,6 +477,10 @@ def test_postprocess_phrase_mode_cuts_to_nearest_vad_quiet_runs():
         ssmd_metadata={
             SHORT_SENTENCE_META_KEY: {
                 "kind": "phrase",
+                "has_left_context": True,
+                "has_right_context": True,
+                "previous_token_end_ts": 100 / 24000,
+                "next_token_start_ts": 1300 / 24000,
                 "target_start_ts": 700 / 24000,
                 "target_end_ts": 900 / 24000,
             }
@@ -511,6 +519,10 @@ def test_postprocess_randomized_phrase_mode_uses_vad_quiet_runs():
         ssmd_metadata={
             SHORT_SENTENCE_META_KEY: {
                 "kind": "randomized-phrase",
+                "has_left_context": True,
+                "has_right_context": True,
+                "previous_token_end_ts": 100 / 24000,
+                "next_token_start_ts": 1300 / 24000,
                 "target_start_ts": 700 / 24000,
                 "target_end_ts": 900 / 24000,
             }
@@ -575,3 +587,265 @@ def test_generate_logs_randomized_phrase_target_timestamps(caplog, capsys):
     metadata = segment.ssmd_metadata[SHORT_SENTENCE_META_KEY]
     assert metadata["target_start_ts"] == 0.0625
     assert metadata["target_end_ts"] == 0.175
+    assert metadata["has_left_context"] is True
+    assert metadata["has_right_context"] is False
+    assert metadata["previous_token_end_ts"] == 0.05
+
+
+def test_join_timestamps_keeps_trailing_whitespace_outside_speech_end():
+    tokens = [
+        {
+            "text": "Go",
+            "phonemes": "go",
+            "whitespace": " ",
+            "is_target": True,
+        },
+        {
+            "text": "on",
+            "phonemes": "on",
+            "whitespace": "",
+            "is_target": False,
+        },
+    ]
+    pred_dur = np.array([3, 1, 1, 2, 2, 2, 0], dtype=np.float32)
+
+    joined = _join_timestamps(tokens, pred_dur)
+
+    assert joined[0]["speech_end_ts"] < joined[0]["end_ts"]
+    assert joined[0]["end_ts"] == joined[1]["start_ts"]
+
+
+def test_boundary_context_ignores_punctuation_tokens():
+    metadata: dict[str, object] = {}
+    timestamped = [
+        {
+            "text": "response",
+            "start_ts": 1.0,
+            "speech_end_ts": 1.5,
+            "end_ts": 1.5,
+            "is_target": False,
+        },
+        {
+            "text": ".",
+            "start_ts": 1.5,
+            "speech_end_ts": 1.7,
+            "end_ts": 1.8,
+            "is_target": False,
+        },
+        {
+            "text": "Yes",
+            "start_ts": 1.8,
+            "speech_end_ts": 2.1,
+            "end_ts": 2.1,
+            "is_target": True,
+        },
+        {
+            "text": "!",
+            "start_ts": 2.1,
+            "speech_end_ts": 2.3,
+            "end_ts": 2.3,
+            "is_target": True,
+        },
+        {
+            "text": ".",
+            "start_ts": 2.3,
+            "speech_end_ts": 2.4,
+            "end_ts": 2.5,
+            "is_target": False,
+        },
+        {
+            "text": "The",
+            "start_ts": 2.5,
+            "speech_end_ts": 2.8,
+            "end_ts": 2.8,
+            "is_target": False,
+        },
+    ]
+
+    populate_short_sentence_boundary_metadata(metadata, timestamped)
+
+    assert metadata["previous_token_end_ts"] == 1.5
+    assert metadata["next_token_start_ts"] == 2.5
+
+
+def test_postprocess_phrase_mode_accepts_quiet_run_overlapping_target_end():
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    audio = np.concatenate(
+        [
+            np.ones(120, dtype=np.float32),
+            np.zeros(120, dtype=np.float32),
+            np.ones(120, dtype=np.float32),
+            np.zeros(120, dtype=np.float32),
+            np.ones(120, dtype=np.float32),
+        ]
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc def.",
+        tokens=[],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "phrase",
+                "has_left_context": True,
+                "has_right_context": True,
+                "previous_token_end_ts": 60 / 24000,
+                "target_start_ts": 240 / 24000,
+                "target_end_ts": 420 / 24000,
+                "next_token_start_ts": 480 / 24000,
+                "min_silence_seconds": 0.005,
+            }
+        },
+        raw_audio=audio,
+    )
+
+    processed = generator._postprocess_audio_segments([segment], trim_silence=False)
+
+    assert processed[0].processed_audio is not None
+    assert np.array_equal(processed[0].processed_audio, audio[240:420])
+
+
+def test_postprocess_end_phrase_mode_keeps_suffix_after_left_boundary():
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    audio = np.concatenate(
+        [
+            np.ones(120, dtype=np.float32),
+            np.zeros(240, dtype=np.float32),
+            np.ones(360, dtype=np.float32),
+        ]
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go.",
+        phonemes="abc def.",
+        tokens=[],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "phrase",
+                "has_left_context": True,
+                "has_right_context": False,
+                "previous_token_end_ts": 60 / 24000,
+                "target_start_ts": 420 / 24000,
+                "target_end_ts": 600 / 24000,
+                "min_silence_seconds": 0.005,
+            }
+        },
+        raw_audio=audio,
+    )
+
+    processed = generator._postprocess_audio_segments([segment], trim_silence=False)
+
+    assert processed[0].processed_audio is not None
+    assert np.array_equal(processed[0].processed_audio, audio[360:])
+
+
+def test_postprocess_phrase_mode_can_use_energy_valley_cutter():
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    audio = np.concatenate(
+        [
+            np.ones(120, dtype=np.float32),
+            np.zeros(240, dtype=np.float32),
+            np.ones(240, dtype=np.float32),
+            np.zeros(240, dtype=np.float32),
+            np.ones(120, dtype=np.float32),
+        ]
+    )
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="abc def.",
+        tokens=[],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "phrase",
+                "cutter": "energy-valley",
+                "has_left_context": True,
+                "has_right_context": True,
+                "previous_token_end_ts": 60 / 24000,
+                "next_token_start_ts": 900 / 24000,
+                "target_start_ts": 420 / 24000,
+                "target_end_ts": 600 / 24000,
+                "min_silence_seconds": 0.005,
+            }
+        },
+        raw_audio=audio,
+    )
+
+    processed = generator._postprocess_audio_segments([segment], trim_silence=False)
+
+    assert processed[0].processed_audio is not None
+    assert np.array_equal(processed[0].processed_audio, audio[360:600])
+
+
+def test_prepare_phrase_audio_falls_back_to_wrap_when_cut_is_uncertain(
+    monkeypatch,
+    caplog,
+):
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    phrase_audio = np.ones(240, dtype=np.float32)
+    fallback_audio = np.full(120, 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(
+        "pykokoro.audio_generator.cut_short_sentence_phrase_audio",
+        lambda audio, metadata: None,
+    )
+
+    def fake_run_onnx(phonemes: str, voice_style: np.ndarray, speed: float):
+        _ = voice_style, speed
+        assert phonemes == "—abc—"
+        return fallback_audio, None
+
+    monkeypatch.setattr(generator, "_run_onnx", fake_run_onnx)
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="phrase",
+        tokens=[1, 2, 3],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "phrase",
+                "fallback_phonemes": "—abc—",
+                "fallback_tokens": [4, 5, 6],
+            }
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pykokoro.audio_generator"):
+        audio = generator._prepare_short_sentence_phrase_audio(
+            segment,
+            phrase_audio,
+            voice_style=np.zeros((16, 256), dtype=np.float32),
+            speed=1.0,
+        )
+
+    assert np.array_equal(audio, fallback_audio)
+    assert segment.phonemes == "—abc—"
+    assert segment.tokens == [4, 5, 6]
+    metadata = segment.ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["fallback_used"] == "wrap"
+    assert metadata["cut_applied"] is True
+    assert "falling back to wrap mode" in caplog.text

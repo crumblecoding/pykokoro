@@ -74,9 +74,7 @@ TEST_SENTENCES = [
 # Voice to use
 # Note: Different voices may produce slightly different durations due to varying
 # speaking rates. af_sarah is recommended for testing the short sentence handler.
-VOICE = "af_bella"  # Changed from af_bella for better short sentence results
-#  VOICE = "af_sarah"  # Changed from af_bella for better short sentence results
-VOICE = "af_heart"  # Changed from af_bella for better short sentence results
+VOICE = "bm_fable"  # Changed from af_bella for better short sentence results
 LANG = "en-us"
 
 

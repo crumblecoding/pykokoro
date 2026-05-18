@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from .constants import MAX_PHONEME_LENGTH, SAMPLE_RATE, SUPPORTED_LANGUAGES
-from .trim import energy_based_vad
+from .constants import MAX_PHONEME_LENGTH, SUPPORTED_LANGUAGES
+from .short_sentence_cutters import cut_phrase_audio
 
 if TYPE_CHECKING:
     from .types import PhonemeSegment
@@ -49,11 +49,12 @@ class PhraseResolveMode:
 
     kind: Literal["phrase"] = "phrase"
     neutral_phrase: str = "She looked up…: {segment}. The conversation resumed."
-    end_phrase: str = "The message on the screen changed to {segment}"
+    end_phrase: str = "The teacher waited for a response. {segment}"
     frame_duration_ms: int = 5
     energy_threshold: float = 0.05
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
+    cutter: Literal["vad", "energy-valley"] = "vad"
 
 
 @dataclass
@@ -64,36 +65,22 @@ class RandomizedPhraseResolveMode:
     neutral_phrases: list[str] = field(
         default_factory=lambda: [
             "She looked up…: {segment}. The conversation resumed.",
-            "The room fell quiet … {segment} … afterward, they moved on.",
-            "He paused…: {segment}…? … Is that you?",
-            "He paused…: {segment}? Is that you?",
-            "He paused. … {segment} Then he continued.",
-            "The student thought, {segment}, before the teacher continued.",
             "The transcript paused…: {segment}; the next entry followed.",
             "The hallway went quiet; {segment}; then footsteps resumed.",
-            "The response stopped — {segment} — then the prompt continued.",
             "The clerk paused, {segment}, before the next name was called.",
-            "The narrator paused — {segment} — then the chapter continued.",
         ]
     )
     end_phrases: list[str] = field(
         default_factory=lambda: [
-            "The message on the screen changed to {segment}",
-            "The line in the script ends with, {segment}",
             "The recording trails off after the words, … {segment}",
-            "The message was brief — just {segment}",
             "Is that … {segment}?",
             "The transcript closes with the words, {segment}",
             "The lesson ended when the teacher asked, {segment}",
             "The letter closed with this unfinished thought — {segment}",
-            "At last, the guide called out, {segment}",
             "The report concludes with this note: {segment}",
-            "The note on the desk simply said, {segment}",
-            "The final caption on the screen read, {segment}",
             "The teacher waited for a response. {segment}",
             "The announcement ended like this: {segment}",
             "There was a pause before the answer came: {segment}",
-            "The final word is hello. The final word is '{segment}'",
             "The host asked again, more quietly this time: {segment}",
             "The conversation stopped after one last reply: {segment}",
         ]
@@ -102,6 +89,7 @@ class RandomizedPhraseResolveMode:
     energy_threshold: float = 0.05
     silence_threshold: float = 1e-4
     min_silence_seconds: float = 0.02
+    cutter: Literal["vad", "energy-valley"] = "vad"
 
 
 ShortSentenceResolveMode = (
@@ -356,6 +344,7 @@ def apply_short_sentence_mode(
         )
         return ShortSentenceApplication(phonemes, tokens)
 
+    fallback_phonemes = _wrap_phonemes(phonemes, config)
     metadata = _build_short_sentence_metadata(
         mode_name=mode_name,
         mode=mode,
@@ -363,118 +352,22 @@ def apply_short_sentence_mode(
         generated_token_count=len(phrase_tokens),
         phrase_template=phrase_template,
         timing_tokens=timing_tokens,
+        fallback_phonemes=fallback_phonemes,
+        fallback_tokens=tokenize(fallback_phonemes),
     )
     return ShortSentenceApplication(phrase_phonemes, phrase_tokens, metadata)
 
 
 def cut_short_sentence_phrase_audio(
     audio: np.ndarray, metadata: dict[str, object]
-) -> np.ndarray:
-    """Cut phrase-generated short sentence audio using timestamps when available."""
+) -> np.ndarray | None:
+    """Cut phrase-generated short sentence audio using the configured cutter."""
     kind = metadata.get("kind")
     if kind not in {"phrase", "randomized-phrase"}:
         return audio
     if audio.size == 0:
         return audio
-
-    target_start_ts = metadata.get("target_start_ts")
-    target_end_ts = metadata.get("target_end_ts")
-    if isinstance(target_start_ts, (int, float)) and isinstance(
-        target_end_ts, (int, float)
-    ):
-        target_start = max(0, int(float(target_start_ts) * SAMPLE_RATE))
-        target_end = min(len(audio), int(float(target_end_ts) * SAMPLE_RATE))
-        runs = _quiet_runs(
-            audio,
-            frame_duration_ms=int(metadata.get("frame_duration_ms", 5)),
-            energy_threshold=float(metadata.get("energy_threshold", 0.05)),
-            min_silence_seconds=float(metadata.get("min_silence_seconds", 0.02)),
-        )
-        before = _nearest_run_before(runs, target_start)
-        after = _nearest_run_after(runs, target_end)
-        if before is not None and after is not None and after[0] > before[1]:
-            return audio[before[1] : after[0]]
-
-    if kind == "randomized-phrase":
-        logger.warning(
-            "Randomized short sentence phrase has no usable target timestamps; "
-            "leaving phrase audio uncut."
-        )
-        return audio
-
-    expected_cut_ratio = float(metadata.get("expected_cut_ratio", 1.0))
-    target = int(len(audio) * max(0.01, min(0.99, expected_cut_ratio)))
-    silence_threshold = float(metadata.get("silence_threshold", 1e-4))
-    min_silence_seconds = float(metadata.get("min_silence_seconds", 0.02))
-    min_silence_samples = max(1, int(SAMPLE_RATE * min_silence_seconds))
-
-    quiet = np.abs(audio) <= silence_threshold
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-
-    for idx, is_quiet in enumerate(quiet):
-        if is_quiet and start is None:
-            start = idx
-        elif not is_quiet and start is not None:
-            if idx - start >= min_silence_samples:
-                runs.append((start, idx))
-            start = None
-
-    if start is not None and len(audio) - start >= min_silence_samples:
-        runs.append((start, len(audio)))
-
-    if not runs:
-        return audio[:target]
-
-    cut_start, _ = min(runs, key=lambda run: abs(run[0] - target))
-    return audio[: max(1, cut_start)]
-
-
-def _quiet_runs(
-    audio: np.ndarray,
-    *,
-    frame_duration_ms: int,
-    energy_threshold: float,
-    min_silence_seconds: float,
-) -> list[tuple[int, int]]:
-    """Return qualifying quiet runs using the same VAD logic as the metrics scorer."""
-    speech_frames = energy_based_vad(
-        audio,
-        SAMPLE_RATE,
-        frame_duration_ms=frame_duration_ms,
-        energy_threshold=energy_threshold,
-    )
-    quiet_frames = ~speech_frames
-    samples_per_frame = max(1, int(SAMPLE_RATE * frame_duration_ms / 1000))
-    min_frames = max(1, int(min_silence_seconds * 1000 / frame_duration_ms))
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-    for index, is_quiet in enumerate(quiet_frames):
-        if is_quiet and start is None:
-            start = index
-        elif not is_quiet and start is not None:
-            if index - start >= min_frames:
-                runs.append((start * samples_per_frame, index * samples_per_frame))
-            start = None
-    if start is not None and len(quiet_frames) - start >= min_frames:
-        runs.append((start * samples_per_frame, len(audio)))
-    return runs
-
-
-def _nearest_run_before(
-    runs: list[tuple[int, int]],
-    anchor: int,
-) -> tuple[int, int] | None:
-    candidates = [run for run in runs if run[1] <= anchor]
-    return max(candidates, key=lambda run: run[1], default=None)
-
-
-def _nearest_run_after(
-    runs: list[tuple[int, int]],
-    anchor: int,
-) -> tuple[int, int] | None:
-    candidates = [run for run in runs if run[0] >= anchor]
-    return min(candidates, key=lambda run: run[0], default=None)
+    return cut_phrase_audio(audio, metadata)
 
 
 def _select_phrase_template(segment_text: str, mode: ShortSentenceResolveMode) -> str:
@@ -498,6 +391,8 @@ def _build_short_sentence_metadata(
     generated_token_count: int,
     phrase_template: str | None = None,
     timing_tokens: list[dict[str, object]] | None = None,
+    fallback_phonemes: str | None = None,
+    fallback_tokens: list[int] | None = None,
 ) -> dict[str, object]:
     expected_cut_ratio = 1.0
     if generated_token_count > 0:
@@ -513,10 +408,23 @@ def _build_short_sentence_metadata(
         "energy_threshold": mode.energy_threshold,
         "silence_threshold": mode.silence_threshold,
         "min_silence_seconds": mode.min_silence_seconds,
+        "cutter": mode.cutter,
     }
     if timing_tokens:
         metadata["timing_tokens"] = timing_tokens
+    if fallback_phonemes is not None:
+        metadata["fallback_phonemes"] = fallback_phonemes
+    if fallback_tokens is not None:
+        metadata["fallback_tokens"] = fallback_tokens
     return metadata
+
+
+def _wrap_phonemes(phonemes: str, config: ShortSentenceConfig) -> str:
+    wrap_mode = config.resolve_modes.get("wrap")
+    pretext = wrap_mode.phoneme_pretext if isinstance(wrap_mode, WrapResolveMode) else "â€”"
+    if pretext == "â€”":
+        pretext = config.phoneme_pretext
+    return f"{pretext}{phonemes}{pretext}"
 
 
 def _coerce_phrase_result(

@@ -16,11 +16,12 @@ sys.path.append(str(Path(__file__).parent))
 
 import find_short_sentence_end_phrase_candidates as end_phrase_candidates
 import find_short_sentence_phrase_candidates as neutral_phrase_candidates
-from pykokoro.audio_generator import _join_timestamps
+from pykokoro.audio_generator import _join_timestamps, populate_short_sentence_boundary_metadata
 from pykokoro.constants import SAMPLE_RATE
 from pykokoro.onnx_backend import Kokoro
 from pykokoro.short_sentence_handler import phonemize_short_sentence_phrase
-from pykokoro.trim import energy_based_vad
+from pykokoro.short_sentence_cutters.energy_valley import find_energy_valley_cut_bounds
+from pykokoro.short_sentence_cutters.shared import boundary_windows_from_metadata
 from pykokoro.types import PhonemeSegment
 
 LANG = "en-us"
@@ -28,10 +29,10 @@ SPEED = 1
 FRAME_DURATION_MS = 5
 ENERGY_THRESHOLD = 0.05
 MIN_SILENCE_SECONDS = 0.02
-MAX_BOUNDARY_GAP_SECONDS = 1.00
+CUTTER = "energy-valley"
 TOP_VOICE_COUNT_FOR_PHRASE_RANKING = 15
 CACHE_FLUSH_EVERY_N_VOICES = 5
-RESULTS_PATH = Path(__file__).with_name(f"{Path(__file__).stem}_results.json")
+RESULTS_PATH = Path(__file__).with_name(f"{Path(__file__).stem}_{CUTTER}_results.json")
 
 # Keep this list explicit so a run compares the same voice set every time.
 VOICES = [
@@ -118,7 +119,8 @@ CACHE_SETTINGS = {
     "frame_duration_ms": FRAME_DURATION_MS,
     "energy_threshold": ENERGY_THRESHOLD,
     "min_silence_seconds": MIN_SILENCE_SECONDS,
-    "max_boundary_gap_seconds": MAX_BOUNDARY_GAP_SECONDS,
+    "cutter": CUTTER,
+    "timestamp_windows": "spoken_tokens_v1",
 }
 
 
@@ -271,34 +273,32 @@ def score_attempt(
         return failure
 
     timestamps = _join_timestamps(timing_tokens, pred_dur)
-    target_tokens = [
-        token
-        for token in timestamps
-        if token.get("is_target")
-        and isinstance(token.get("start_ts"), (int, float))
-        and isinstance(token.get("end_ts"), (int, float))
-    ]
-    if not target_tokens:
+    metadata: dict[str, object] = {
+        "kind": "phrase",
+        "cutter": CUTTER,
+        "frame_duration_ms": FRAME_DURATION_MS,
+        "energy_threshold": ENERGY_THRESHOLD,
+        "min_silence_seconds": MIN_SILENCE_SECONDS,
+    }
+    populate_short_sentence_boundary_metadata(metadata, timestamps)
+    windows = boundary_windows_from_metadata(len(audio), metadata)
+    if windows is None or windows.left_window is None:
+        return failure
+    if spec.require_after_boundary and windows.right_window is None:
         return failure
 
-    target_start = int(min(float(token["start_ts"]) for token in target_tokens) * SAMPLE_RATE)
-    target_end = int(max(float(token["end_ts"]) for token in target_tokens) * SAMPLE_RATE)
-    runs = quiet_runs(audio)
-    before = nearest_run_before(runs, target_start)
-    after = nearest_run_after(runs, target_end) if spec.require_after_boundary else None
-    if before is None or (spec.require_after_boundary and after is None):
+    cut_bounds = find_energy_valley_cut_bounds(audio, metadata)
+    if cut_bounds is None:
         return failure
+    left_cut, right_cut = cut_bounds
 
-    before_gap = max(0, target_start - before[1]) / SAMPLE_RATE
+    before_gap = max(0, windows.target_start - left_cut) / SAMPLE_RATE
     gaps = [before_gap]
-    pause_lengths = [(before[1] - before[0]) / SAMPLE_RATE]
-    if after is not None:
-        after_gap = max(0, after[0] - target_end) / SAMPLE_RATE
+    pause_lengths = [_window_seconds(windows.left_window)]
+    if spec.require_after_boundary and windows.right_window is not None:
+        after_gap = max(0, right_cut - windows.target_end) / SAMPLE_RATE
         gaps.append(after_gap)
-        pause_lengths.append((after[1] - after[0]) / SAMPLE_RATE)
-
-    if any(gap > MAX_BOUNDARY_GAP_SECONDS for gap in gaps):
-        return failure
+        pause_lengths.append(_window_seconds(windows.right_window))
 
     return AttemptResult(True, gaps, pause_lengths)
 
@@ -474,44 +474,8 @@ def print_voice_scores(title: str, scores: list[VoiceScore]) -> None:
         )
 
 
-def quiet_runs(audio: np.ndarray) -> list[tuple[int, int]]:
-    speech_frames = energy_based_vad(
-        audio,
-        SAMPLE_RATE,
-        frame_duration_ms=FRAME_DURATION_MS,
-        energy_threshold=ENERGY_THRESHOLD,
-    )
-    quiet_frames = ~speech_frames
-    samples_per_frame = max(1, int(SAMPLE_RATE * FRAME_DURATION_MS / 1000))
-    min_frames = max(1, int(MIN_SILENCE_SECONDS * 1000 / FRAME_DURATION_MS))
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-    for index, is_quiet in enumerate(quiet_frames):
-        if is_quiet and start is None:
-            start = index
-        elif not is_quiet and start is not None:
-            if index - start >= min_frames:
-                runs.append((start * samples_per_frame, index * samples_per_frame))
-            start = None
-    if start is not None and len(quiet_frames) - start >= min_frames:
-        runs.append((start * samples_per_frame, len(audio)))
-    return runs
-
-
-def nearest_run_before(
-    runs: list[tuple[int, int]],
-    anchor: int,
-) -> tuple[int, int] | None:
-    candidates = [run for run in runs if run[1] <= anchor]
-    return max(candidates, key=lambda run: run[1], default=None)
-
-
-def nearest_run_after(
-    runs: list[tuple[int, int]],
-    anchor: int,
-) -> tuple[int, int] | None:
-    candidates = [run for run in runs if run[0] >= anchor]
-    return min(candidates, key=lambda run: run[0], default=None)
+def _window_seconds(window: tuple[int, int]) -> float:
+    return max(0, window[1] - window[0]) / SAMPLE_RATE
 
 
 if __name__ == "__main__":
