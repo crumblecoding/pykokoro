@@ -600,12 +600,14 @@ class AudioGenerator:
             for template in [short_sentence_metadata.get("phrase_template")]
             if isinstance(template, str)
         }
+        retry_attempts = 0
         for template in templates:
             if not isinstance(template, str) or not template.strip():
                 continue
             if template in used_templates:
                 continue
             used_templates.add(template)
+            retry_attempts += 1
 
             retry = build_short_sentence_phrase_retry(
                 segment,
@@ -626,21 +628,22 @@ class AudioGenerator:
                 continue
 
             original_template = short_sentence_metadata.get("phrase_template")
-            logger.warning(
+            logger.info(
                 "Short sentence phrase cut for '%s' lacked confident boundaries; "
-                "using fallback phrase '%s' instead of '%s'.",
+                "failed with '%s', trying another phrase.",
                 segment.text[:50],
-                template,
                 original_template if isinstance(original_template, str) else "",
             )
             short_sentence_metadata.clear()
             short_sentence_metadata.update(retry.metadata)
             short_sentence_metadata["cut_applied"] = True
             short_sentence_metadata["fallback_used"] = "phrase"
+            short_sentence_metadata["retry_attempts"] = retry_attempts
             segment.phonemes = retry.phonemes
             segment.tokens = retry.tokens
             return cut_audio
 
+        short_sentence_metadata["retry_attempts"] = retry_attempts
         return None
 
     def _postprocess_audio_segments(

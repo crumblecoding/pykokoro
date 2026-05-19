@@ -328,7 +328,17 @@ def apply_short_sentence_mode(
         if pretext == "—":
             pretext = config.phoneme_pretext
         wrapped = f"{pretext}{phonemes}{pretext}"
-        return ShortSentenceApplication(wrapped, tokenize(wrapped))
+        wrapped_tokens = tokenize(wrapped)
+        return ShortSentenceApplication(
+            wrapped,
+            wrapped_tokens,
+            {
+                "mode": mode_name,
+                "kind": mode.kind,
+                "original_token_count": len(tokens),
+                "generated_token_count": len(wrapped_tokens),
+            },
+        )
 
     phrase_template = _select_phrase_template(segment.text, mode, rng=rng)
     phrase_fallback_templates = _select_phrase_fallback_templates(

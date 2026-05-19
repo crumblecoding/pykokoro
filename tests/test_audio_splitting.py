@@ -796,7 +796,12 @@ def test_phrase_modes_fall_back_to_wrap_once_without_timestamp_output(
         f"{pretext}abc{pretext}",
         f"{pretext}abc{pretext}",
     ]
-    assert all(segment.ssmd_metadata is None for segment in processed)
+    assert all(segment.ssmd_metadata is not None for segment in processed)
+    assert all(
+        segment.ssmd_metadata[SHORT_SENTENCE_META_KEY]["kind"] == "wrap"
+        for segment in processed
+        if segment.ssmd_metadata is not None
+    )
     captured = capsys.readouterr()
     assert captured.out.count("Falling back to wrap mode for this run.") == 1
 
