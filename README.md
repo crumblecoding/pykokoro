@@ -538,12 +538,15 @@ context around those short segments before synthesis.
 **How It Works:**
 
 1. Short segments are detected based on phoneme token length.
-2. Depending on the chosen resolution mode, the segment is wrapped with more context.
-   (default resolution mode: 'phrase')
+2. Depending on the chosen resolve mode, the segment is wrapped with more context.
+   (default resolve mode: `randomized-phrase`)
 3. TTS generates audio from the wrapped phoneme sequence.
 4. Cut away the extra context and put audio together.
 
 This happens automatically during `pipe.run()` - no configuration needed!
+
+NOTE: Currently, phrase and randomized-phrase mode only support ENGLISH text! (see
+"Advanced customization of short-sentence handling" to add support for other languages)
 
 **Customizing the Behavior:**
 
@@ -553,18 +556,17 @@ You can customize the behavior using `ShortSentenceConfig`:
 from pykokoro import KokoroPipeline, PipelineConfig
 from pykokoro.short_sentence_handler import ShortSentenceConfig
 
-# Less aggressive short sentence handling
+# Less aggressive short sentence handling (also less acurate)
 short_sentence_config = ShortSentenceConfig(
-    mode="wrap",
+    resolve_mode="wrap",
     min_phoneme_length=10,  # Treat segments <10 phoneme tokens as short
     phoneme_pretext="—",  # Add this before and after short phonemes
 )
 
-# More aggressive short sentence handling (useful for some voices)
+# More advanced short sentence handling (useful for some voices)
 short_sentence_config = ShortSentenceConfig(
-    mode="randomized-phrase",
-    min_phoneme_length=40,  # Treat segments <10 phoneme tokens as short
-    phoneme_pretext="—",  # Add this before and after short phonemes
+    resolve_mode="randomized-phrase",
+    min_phoneme_length=40,  # Treat segments <40 phoneme tokens as short
 )
 
 pipe = KokoroPipeline(
@@ -578,10 +580,10 @@ res = pipe.run("Why?")
 - `enabled=True`: Short-sentence handling is enabled by default
 - `min_phoneme_length=30`: Segments below this token count engage short-sentence
   handling
-- `mode="randomized-phrase"` Chose between `randomized-phrase`(default), `phrase`,
-  `wrap`(fallback), or `none`
-- `selection="auto"` Chose which phrase templates to use. `auto`= uses "end", if phrase
-  ends with '.', otherwise uses "neutral"
+- `resolve_mode="randomized-phrase"` Chose between `randomized-phrase`(default),
+  `phrase`, or `wrap`(fallback)
+- `phrase_selection="auto"` Chose which phrase templates to use. `auto`= uses "end", if
+  phrase ends with '.', otherwise uses "neutral"
 - `phrase_fallback_tries=3`: Phrase modes try up to X alternate phrase templates before
   falling back to wrap mode when a cut lacks confident boundaries
 - `phoneme_pretext="—"`: Phoneme context added in wrap mode before and after short
@@ -591,16 +593,22 @@ res = pipe.run("Why?")
 from pykokoro.short_sentence_handler import (
     PhraseResolveMode,
     ShortSentenceConfig,
-    ShortSentenceInterval,
 )
 
 short_sentence_config = ShortSentenceConfig(
     resolve_modes={
         "phrase": PhraseResolveMode(
             phrase_selection="end",  # "auto", "neutral", or "end"
+        ),
+        "randomized-phrase": RandomizedPhraseResolveMode(
+            phrase_selection="neutral", # "auto", "neutral", or "end"
+        ),
+        "wrap": WrapResolveMode(
+            phoneme_pretext="…"
         )
     },
-    intervals=[ShortSentenceInterval("short", 10, "phrase")],
+    resolve_mode="phrase",
+    phrase_fallback_tries=5,
 )
 ```
 
@@ -626,6 +634,51 @@ res = pipe.run("Why?")
 ```
 
 See `examples/optimal_phoneme_length_demo.py` for a demonstration.
+
+**Advanced customization of short-sentence handling**
+
+You can add custom template phrases used to add context in phrase mode, but THIS IS NOT
+RECOMMENDED for most users! However, you can use it to add support for more languages
+than just english.
+
+WARNING: The quality of the phrase makes a huge difference. If possible, test the
+phrases first, e.g. by using the various short-sentence py scripts in metrics/. All
+default phrases have been verified with the
+metrics\rank_short_sentence_phrases_across_voice_list.py script to work reliably with
+most voices.
+
+```python
+from pykokoro.short_sentence_handler import (
+    PhraseResolveMode,
+    ShortSentenceConfig,
+)
+
+short_sentence_config = ShortSentenceConfig(
+    resolve_modes={
+        "phrase": PhraseResolveMode(
+            phrase_selection="end",  # "auto", "neutral", or "end"
+            neutral_phrase="The word, {segment}, appears here.", # Changing this to anything not in the default neutral_phrases list is not recommended
+            end_phrase="The word is hello. The word is '{segment}'", # Changing this to anything not in the default end_phrases list is not recommended
+        ),
+        "randomized-phrase": RandomizedPhraseResolveMode(
+            phrase_selection="neutral", # "auto", "neutral", or "end"
+            neutral_phrases=[ # Adding new untested phrases is not recommended without rigurous testing
+                "First {segment} is the word.",
+                "Second {segment} is the word.",
+                "Third {segment} is the word.",
+                "Fourth {segment} is the word.",
+            ],
+            end_phrases=[ # Adding new untested phrases is not recommended without rigurous testing
+                "First {segment}."
+            ]
+        ),
+        "wrap": WrapResolveMode(
+            phoneme_pretext="…"
+        )
+    },
+    resolve_mode="phrase",
+)
+```
 
 ## Available Voices
 

@@ -44,7 +44,7 @@ class AudioGenerator:
     - Batch generation from phoneme lists
     - Segment-based generation with pause support
     - Token-to-audio generation
-    - Short sentence handling via phoneme pretext
+    - Short sentence handling via configured context modes
 
     Args:
         session: ONNX Runtime inference session
@@ -363,29 +363,20 @@ class AudioGenerator:
                 self._reported_missing_timestamp_output = True
             resolve_modes = dict(effective_config.resolve_modes)
             resolve_modes["wrap"] = resolve_modes.get("wrap", WrapResolveMode())
-            intervals = [
-                dataclasses.replace(interval, resolve_mode="wrap")
-                if interval.resolve_mode is not False
-                else interval
-                for interval in effective_config.intervals
-            ]
             effective_config = dataclasses.replace(
                 effective_config,
                 resolve_modes=resolve_modes,
-                intervals=intervals,
+                resolve_mode="wrap",
             )
 
         return effective_config
 
     @staticmethod
     def _uses_phrase_short_sentence_mode(config: ShortSentenceConfig) -> bool:
-        for interval in config.intervals:
-            if interval.resolve_mode is False:
-                continue
-            mode = config.resolve_modes.get(interval.resolve_mode)
-            if mode is not None and mode.kind in {"phrase", "randomized-phrase"}:
-                return True
-        return False
+        if config.resolve_mode is False:
+            return False
+        mode = config.resolve_modes.get(config.resolve_mode)
+        return mode is not None and mode.kind in {"phrase", "randomized-phrase"}
 
     def _preprocess_segments(
         self,

@@ -6,7 +6,7 @@ This example demonstrates the cross-correlation extraction technique used by PyK
 to improve audio quality for very short sentences.
 
 The short sentence handler:
-1. Detects sentences with fewer phonemes than a threshold (default: 10)
+1. Detects sentences with fewer phonemes than a threshold (default: 30)
 2. Generates the short sentence alone (poor quality, but needed for pattern)
 3. Generates context + short sentence together (good quality with natural prosody)
 4. Uses cross-correlation to find where the short sentence appears in combined audio
@@ -32,7 +32,6 @@ from pykokoro.generation_config import GenerationConfig
 from pykokoro.short_sentence_handler import (
     PhraseResolveMode,
     ShortSentenceConfig,
-    ShortSentenceInterval,
 )
 from pykokoro.tokenizer import Tokenizer
 
@@ -217,10 +216,9 @@ def main():
 
     print("\nHow the Short Sentence Handler Works:")
     print("  1. Detects sentences with < min_phoneme_length phonemes")
-    print("  2. Generates the short sentence alone to measure duration")
-    print("  3. Repeats the text to reach target_phoneme_length")
-    print("  4. Generates TTS for repeated text (better quality)")
-    print("  5. Cuts at measured duration + 15% safety buffer")
+    print("  2. Applies the configured resolve mode to the short segment")
+    print("  3. Phrase modes synthesize a context phrase")
+    print("  4. Cuts away the extra phrase context when boundaries are confident")
 
     print("\nBenefits:")
     print("  • Improved prosody and intonation for short sentences")
@@ -228,7 +226,8 @@ def main():
     print("  • Better handling of single-word sentences")
 
     print("\nConfiguration Options:")
-    print("  • min_phoneme_length: Threshold for 'short' (default: 10)")
+    print("  • min_phoneme_length: Threshold for 'short' (default: 30)")
+    print("  • resolve_mode: 'randomized-phrase' (default), 'phrase', or 'wrap'")
     print("  • enabled: Enable/disable the feature (default: True)")
 
     print("\nUsage:")
@@ -253,18 +252,16 @@ def neutral_phrase_short_sentence_config() -> ShortSentenceConfig:
                 end_phrase="The word, {segment}, appears here.",
             )
         },
-        intervals=[
-            ShortSentenceInterval("demo short phrase", 20, "phrase"),
-        ],
+        min_phoneme_length=20,
+        resolve_mode="phrase",
     )
 
 
 def pretext_short_sentence_config() -> ShortSentenceConfig:
     """Use phoneme pretext wrapping for the same demo range as phrase mode."""
     return ShortSentenceConfig(
-        intervals=[
-            ShortSentenceInterval("demo short pretext", 20, "wrap"),
-        ],
+        min_phoneme_length=20,
+        resolve_mode="wrap",
     )
 
 

@@ -626,8 +626,7 @@ Trim Silence from Audio
 Short Sentence Handling
 -----------------------
 
-PyKokoro improves short sentences by surrounding the segment phonemes with a
-configurable phoneme pretext before synthesis. You can tune settings via
+PyKokoro improves short sentences by adding context before synthesis. You can tune settings via
 ``ShortSentenceConfig``:
 
 .. code-block:: python
@@ -636,6 +635,7 @@ configurable phoneme pretext before synthesis. You can tune settings via
 
    short_config = ShortSentenceConfig(
        min_phoneme_length=10,
+       resolve_mode="randomized-phrase",
        phrase_fallback_tries=3,
        phoneme_pretext="…",
    )

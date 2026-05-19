@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Rank carrier phrases that place inserted short text at the end."""
+"""Rank end template phrases for short-sentence phrase modes.
+
+This only test 1 voice! For more thorough testing with multiple voices use rank_short_sentence_phrases_across_voice_list.py
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Rank short-sentence carrier phrases across a fixed set of voices."""
+"""Rank short-sentence carrier phrases across a set of voices.
+This enables selection of phrases that work reliably for most voices.
+
+This script runs a long time(especially on the first run), so GPU is highly recommended.
+
+The script has a resume-after-interrruption mechanism, and does not recompute already calculated metrics.
+This makes it much easier to put a single new phrase into the ranking, without having everything recalculated.
+
+Change VOICES to test for specific subset of voices.
+Change DEMO_SEGMENTS to test specific short text segments are handled accuratly by the chosen template phrases.
+Change NEUTRAL_PHRASES / END_PHRASES to try out different template phrases.
+
+Run duration: VOICES * DEMO_SEGMENTS * (NEUTRAL_PHRASES + END_PHRASES)
+"""
 
 from __future__ import annotations
 

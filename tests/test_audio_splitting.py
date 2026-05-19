@@ -19,7 +19,6 @@ from pykokoro.short_sentence_handler import (
     RandomizedPhraseResolveMode,
     SHORT_SENTENCE_META_KEY,
     ShortSentenceConfig,
-    ShortSentenceInterval,
 )
 from pykokoro.types import PhonemeSegment
 
@@ -105,6 +104,7 @@ def test_preprocess_wraps_short_segments_when_enabled():
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
         tokenizer=cast(Any, tokenizer),
+        short_sentence_config=ShortSentenceConfig(min_phoneme_length=5),
     )
     segment = PhonemeSegment(
         id="seg_1",
@@ -134,6 +134,7 @@ def test_preprocess_does_not_wrap_short_segments_when_disabled():
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
         tokenizer=cast(Any, tokenizer),
+        short_sentence_config=ShortSentenceConfig(min_phoneme_length=5),
     )
     segment = PhonemeSegment(
         id="seg_1",
@@ -180,6 +181,7 @@ def test_preprocess_does_not_wrap_long_segments():
     generator = AudioGenerator(
         session=cast(Any, DummySession()),
         tokenizer=cast(Any, tokenizer),
+        short_sentence_config=ShortSentenceConfig(min_phoneme_length=5),
     )
     segment = PhonemeSegment(
         id="seg_1",
@@ -234,7 +236,7 @@ def test_preprocess_phrase_mode_uses_phrase_phonemes_and_metadata(monkeypatch):
                 end_phrase="The word is hello. The word is '{segment}'",
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -285,7 +287,7 @@ def test_preprocess_randomized_phrase_mode_uses_configured_phrases(monkeypatch):
                 end_phrases=["The word is hello. The word is '{segment}'"],
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+        resolve_mode="randomized-phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -331,7 +333,7 @@ def test_preprocess_phrase_mode_uses_end_phrase_for_period(monkeypatch):
                 end_phrase="The word is hello. The word is '{segment}'",
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -373,7 +375,7 @@ def test_preprocess_phrase_mode_adds_ranked_phrase_fallbacks(monkeypatch):
     config = ShortSentenceConfig(
         phrase_fallback_tries=3,
         resolve_modes={"phrase": PhraseResolveMode(phrase_selection="neutral")},
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -420,7 +422,7 @@ def test_preprocess_phrase_fallbacks_skip_used_template_not_index(monkeypatch):
                 neutral_phrase=default_mode.neutral_phrases[1],
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -462,13 +464,13 @@ def test_preprocess_phrase_fallbacks_skip_used_template_not_index(monkeypatch):
 
 def test_preprocess_randomized_phrase_mode_adds_following_fallbacks(monkeypatch):
     tokenizer = DummyTokenizer(factor=1)
+    config = ShortSentenceConfig(
     phrases = [
         "First {segment}.",
         "Second {segment}.",
         "Third {segment}.",
         "Fourth {segment}.",
     ]
-    config = ShortSentenceConfig(
         phrase_fallback_tries=3,
         resolve_modes={
             "randomized-phrase": RandomizedPhraseResolveMode(
@@ -476,7 +478,7 @@ def test_preprocess_randomized_phrase_mode_adds_following_fallbacks(monkeypatch)
                 neutral_phrases=phrases,
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+        resolve_mode="randomized-phrase",
     )
 
     monkeypatch.setattr(short_sentence_handler.random, "choice", lambda choices: choices[2])
@@ -534,7 +536,7 @@ def test_preprocess_randomized_phrase_mode_uses_seeded_sequence(monkeypatch):
                 neutral_phrases=phrases,
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+        resolve_mode="randomized-phrase",
     )
     selected_templates: list[str] = []
 
@@ -585,7 +587,7 @@ def test_preprocess_phrase_mode_can_force_end_phrase_for_neutral_text(monkeypatc
                 end_phrase="The word is hello. The word is '{segment}'",
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -631,7 +633,7 @@ def test_preprocess_phrase_mode_can_force_neutral_phrase_for_period(monkeypatch)
                 end_phrase="The word is hello. The word is '{segment}'",
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -677,7 +679,7 @@ def test_preprocess_randomized_phrase_mode_can_force_end_phrases(monkeypatch):
                 end_phrases=["The word is hello. The word is '{segment}'"],
             )
         },
-        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+        resolve_mode="randomized-phrase",
     )
 
     def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
@@ -756,7 +758,7 @@ def test_phrase_modes_fall_back_to_wrap_once_without_timestamp_output(
     tokenizer = DummyTokenizer(factor=1)
     config = ShortSentenceConfig(
         resolve_modes={"phrase": PhraseResolveMode()},
-        intervals=[ShortSentenceInterval("single syllable", 5, "phrase")],
+        resolve_mode="phrase",
     )
 
     def unexpected_phrase(*args, **kwargs):

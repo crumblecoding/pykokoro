@@ -13,7 +13,6 @@ from pykokoro.short_sentence_handler import (
     PhraseResolveMode,
     RandomizedPhraseResolveMode,
     ShortSentenceConfig,
-    ShortSentenceInterval,
 )
 
 VOICE = "af_bella"
@@ -58,7 +57,8 @@ def single_phrase_config(
                 cutter="energy-valley",
             )
         },
-        intervals=[ShortSentenceInterval("single phrase", 40, "phrase")],
+        min_phoneme_length=40,
+        resolve_mode="phrase",
     )
 
 
@@ -77,9 +77,8 @@ def randomized_phrase_config(
                 cutter="energy-valley",
             )
         },
-        intervals=[
-            ShortSentenceInterval("randomized phrases", 40, "randomized-phrase")
-        ],
+        min_phoneme_length=40,
+        resolve_mode="randomized-phrase",
     )
 
 

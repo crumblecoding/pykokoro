@@ -106,15 +106,6 @@ ShortSentenceResolveMode = (
 
 
 @dataclass
-class ShortSentenceInterval:
-    """Token interval that selects a short sentence resolve mode."""
-
-    name: str
-    max_token_length: int
-    resolve_mode: ResolveModeName
-
-
-@dataclass
 class ShortSentenceApplication:
     """Result of applying a short sentence resolve mode."""
 
@@ -168,6 +159,8 @@ class ShortSentenceConfig:
         phoneme_pretext: Phoneme(s) to add before and after the target word
             when generating combined audio for context. Default: "—".
         enabled: Whether short sentence handling is enabled. Default: True.
+        resolve_mode: Resolve mode to apply to all short sentences. Default:
+            "randomized-phrase".
         phrase_fallback_tries: Number of alternate phrase templates to try, if confidence level for cutting is too low for a phrase, before
             falling back to wrap mode. Default: 3
             Higher=more robust and possibly slower for less-accurate voices, Lower=falls back to wrap mode quicker.
@@ -177,19 +170,13 @@ class ShortSentenceConfig:
     min_phoneme_length: int = 30
     phoneme_pretext: str = "—"
     enabled: bool = True
+    resolve_mode: ResolveModeName = "randomized-phrase"
     resolve_modes: dict[str, ShortSentenceResolveMode] = field(
         default_factory=lambda: {
             "wrap": WrapResolveMode(),
             "phrase": PhraseResolveMode(),
             "randomized-phrase": RandomizedPhraseResolveMode(),
         }
-    )
-    intervals: list[ShortSentenceInterval] = field(
-        default_factory=lambda: [
-            ShortSentenceInterval("single syllable", 5, "wrap"),
-            ShortSentenceInterval("short", 10, False),
-            ShortSentenceInterval("medium", 20, False),
-        ]
     )
     phrase_fallback_tries: int = 3
 
@@ -211,12 +198,8 @@ class ShortSentenceConfig:
         if not self.enabled:
             return False
 
-        for interval in self.intervals:
-            if phoneme_length < interval.max_token_length:
-                return interval.resolve_mode
-
         if phoneme_length < self.min_phoneme_length:
-            return "wrap"
+            return self.resolve_mode
         return False
 
     def get_resolve_mode(self, phoneme_length: int) -> ShortSentenceResolveMode | None:
