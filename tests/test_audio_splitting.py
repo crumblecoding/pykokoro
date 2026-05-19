@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -516,6 +517,62 @@ def test_preprocess_randomized_phrase_mode_adds_following_fallbacks(monkeypatch)
         phrases[0],
         phrases[1],
     ]
+
+
+def test_preprocess_randomized_phrase_mode_uses_seeded_sequence(monkeypatch):
+    tokenizer = DummyTokenizer(factor=1)
+    phrases = [
+        "First {segment}.",
+        "Second {segment}.",
+        "Third {segment}.",
+        "Fourth {segment}.",
+    ]
+    config = ShortSentenceConfig(
+        resolve_modes={
+            "randomized-phrase": RandomizedPhraseResolveMode(
+                phrase_selection="neutral",
+                neutral_phrases=phrases,
+            )
+        },
+        intervals=[ShortSentenceInterval("single syllable", 5, "randomized-phrase")],
+    )
+    selected_templates: list[str] = []
+
+    def fake_phonemize(segment: PhonemeSegment, phrase_template: str):
+        _ = segment
+        selected_templates.append(phrase_template)
+        return "abc def.", list(range(8))
+
+    monkeypatch.setattr(
+        short_sentence_handler,
+        "phonemize_short_sentence_phrase",
+        fake_phonemize,
+    )
+    generator = AudioGenerator(
+        session=cast(Any, TimestampSession()),
+        tokenizer=cast(Any, tokenizer),
+        short_sentence_config=config,
+    )
+    segments = [
+        PhonemeSegment(
+            id=f"seg_{index}",
+            segment_id=f"seg_{index}",
+            phoneme_id=0,
+            text="Go",
+            phonemes="abc",
+            tokens=[],
+        )
+        for index in range(4)
+    ]
+
+    generator._preprocess_segments(
+        segments,
+        enable_short_sentence_override=True,
+        random_seed=1234,
+    )
+
+    expected_rng = random.Random(1234)
+    assert selected_templates == [expected_rng.choice(phrases) for _ in segments]
 
 
 def test_preprocess_phrase_mode_can_force_end_phrase_for_neutral_text(monkeypatch):

@@ -320,6 +320,7 @@ def apply_short_sentence_mode(
     tokens: list[int],
     config: ShortSentenceConfig,
     tokenize: Callable[[str], list[int]],
+    rng: random.Random | None = None,
 ) -> ShortSentenceApplication:
     """Apply the configured short sentence resolve mode to a segment."""
     mode_name = config.get_resolve_mode_name(len(tokens))
@@ -338,7 +339,7 @@ def apply_short_sentence_mode(
         wrapped = f"{pretext}{phonemes}{pretext}"
         return ShortSentenceApplication(wrapped, tokenize(wrapped))
 
-    phrase_template = _select_phrase_template(segment.text, mode)
+    phrase_template = _select_phrase_template(segment.text, mode, rng=rng)
     phrase_fallback_templates = _select_phrase_fallback_templates(
         segment.text,
         mode,
@@ -425,11 +426,17 @@ def build_short_sentence_phrase_retry(
     return ShortSentenceApplication(phrase_phonemes, phrase_tokens, metadata)
 
 
-def _select_phrase_template(segment_text: str, mode: ShortSentenceResolveMode) -> str:
+def _select_phrase_template(
+    segment_text: str,
+    mode: ShortSentenceResolveMode,
+    *,
+    rng: random.Random | None = None,
+) -> str:
     use_end_phrase = _uses_end_phrase(segment_text, mode)
     if isinstance(mode, RandomizedPhraseResolveMode):
         choices = _phrase_choices(segment_text, mode)
-        return random.choice(choices)
+        chooser = rng if rng is not None else random
+        return chooser.choice(choices)
     if isinstance(mode, PhraseResolveMode):
         return mode.end_phrase if use_end_phrase else mode.neutral_phrase
     return ""

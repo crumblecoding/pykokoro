@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import random
 import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
@@ -390,12 +391,14 @@ class AudioGenerator:
         self,
         segments: list[PhonemeSegment],
         enable_short_sentence_override: bool | None,
+        random_seed: int | None = None,
     ) -> list[PhonemeSegment]:
         from .short_sentence_handler import is_segment_empty, is_segment_short
 
         effective_config = self._resolve_short_sentence_config(
             enable_short_sentence_override
         )
+        phrase_rng = random.Random(random_seed) if random_seed is not None else None
         processed: list[PhonemeSegment] = []
 
         for segment in segments:
@@ -428,6 +431,7 @@ class AudioGenerator:
                         tokens,
                         effective_config,
                         self._tokenizer.tokenize,
+                        rng=phrase_rng,
                     )
                     phonemes = short_sentence.phonemes
                     tokens = short_sentence.tokens
@@ -702,6 +706,7 @@ class AudioGenerator:
         trim_silence: bool,
         voice_resolver: Callable[[str], np.ndarray] | None = None,
         enable_short_sentence_override: bool | None = None,
+        random_seed: int | None = None,
     ) -> np.ndarray:
         """Generate audio from list of PhonemeSegment instances.
 
@@ -725,12 +730,14 @@ class AudioGenerator:
                 None (default): Use config setting
                 True: Force enable short sentence handling
                 False: Force disable short sentence handling
+            random_seed: Optional seed for reproducible randomized short-sentence
+                phrase selection.
 
         Returns:
             Concatenated audio array
         """
         preprocessed = self._preprocess_segments(
-            segments, enable_short_sentence_override
+            segments, enable_short_sentence_override, random_seed
         )
         generated = self._generate_raw_audio_segments(
             preprocessed, voice_style, speed, voice_resolver
