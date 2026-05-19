@@ -1,16 +1,15 @@
 """Short sentence handling for pykokoro using single-word context approach.
 
-This module provides functionality to improve audio quality for short, single-word
-sentences by applying a "context-prepending" technique during phoneme creation.
-
-Only activates for short (<5 phonemes) AND single-word sentences (no spaces)
+This module provides functionality to improve audio quality for short phrases
+ by applying a "context-prepending" technique during phoneme creation.
+ 
+See ShortSentenceConfig for details.
 
 This approach produces better prosody and intonation compared to generating
 very short sentences directly, as neural TTS models typically need more context
 to produce natural-sounding speech.
 
-Multi-word or sentences with internal breaks will NOT use this handler, as they
-already have sufficient context for natural prosody.
+Longer phrases will NOT use this handler, as they already have sufficient context for natural prosody.
 """
 
 from __future__ import annotations
@@ -146,27 +145,36 @@ class ShortSentenceTimingToken:
 class ShortSentenceConfig:
     """Configuration for short sentence handling using single-word context.
 
-    Short, single-word sentences (< 10 phonemes, no spaces) often sound robotic
-    when generated alone. This module improves quality by:
-    1. Checking sentence is both short AND single-word (no spaces)
-    2. Adding phoneme around word
+    Short or single-word phrases (< 30 phonemes) often sound robotic
+    when generated alone in most voices. E.g. "Oh!" or "One step."
+    This module improves quality by applying workarounds.
 
-    Multi-word sentences or sentences with breaks will NOT use this handler.
+    Mode: phrase and randomized-phrase (default)
+    1. Add a full sentence around the phrase. "Phrase" uses a fixed sentence, "Randomized-Phrase" choses from a list for variety.
+    2. Cut out the phrase if confidence level for a clean cut is reached.
+    3. If not, tries another surrounding full sentence.
+    This mode works best, but can increase computation time.
+    Accuracy is voice dependent, but a less accurate voice will only slow it down, not stop it from working.
+    (Note: requires a timestamped onnx model, which is used by default.)
+
+    Mode: Wrap 
+    1. Add phoneme pretext around the phrase. (e.g. "—" or "…")
+    This mode is faster and still an improvement over no short-sentence handling.
 
     Attributes:
         min_phoneme_length: Threshold below which sentences are considered "short"
-            based on token count and will use context extraction. Default: 10.
+            based on token count and will use context extraction. Default: 30 (decent for most voices).
+            Set as low as you can without having garbled or stretched short phrases with your voice.
         phoneme_pretext: Phoneme(s) to add before and after the target word
             when generating combined audio for context. Default: "—".
         enabled: Whether short sentence handling is enabled. Default: True.
-        phrase_fallback_tries: Number of alternate phrase templates to try before
-            falling back to wrap mode. Phrase modes can be significantly slower
-            because they may synthesize extra context phrases, but usually improve
-            very short segment audio much more than simple wrapping.
+        phrase_fallback_tries: Number of alternate phrase templates to try, if confidence level for cutting is too low for a phrase, before
+            falling back to wrap mode. Default: 3
+            Higher=more robust and possibly slower for less-accurate voices, Lower=falls back to wrap mode quicker.
 
     """
 
-    min_phoneme_length: int = 5
+    min_phoneme_length: int = 30
     phoneme_pretext: str = "—"
     enabled: bool = True
     resolve_modes: dict[str, ShortSentenceResolveMode] = field(
@@ -268,7 +276,7 @@ def is_segment_short(
 ) -> bool:
     """Check if segment should use context-prepending.
 
-    Checks if segment is BOTH short (<10 phonemes) AND single-word (no spaces).
+    Checks if segment is short (e.g. <30 phonemes).
 
     Args:
         segment: PhonemeSegment to check

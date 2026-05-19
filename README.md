@@ -538,23 +538,33 @@ context around those short segments before synthesis.
 **How It Works:**
 
 1. Short segments are detected based on phoneme token length.
-2. A configurable phoneme pretext is added before and after the segment phonemes.
-3. TTS generates audio from the wrapped phoneme sequence with more context.
+2. Depending on the chosen resolution mode, the segment is wrapped with more context.
+   (default resolution mode: 'phrase')
+3. TTS generates audio from the wrapped phoneme sequence.
+4. Cut away the extra context and put audio together.
 
 This happens automatically during `pipe.run()` - no configuration needed!
 
 **Customizing the Behavior:**
 
-You can customize the thresholds using `ShortSentenceConfig`:
+You can customize the behavior using `ShortSentenceConfig`:
 
 ```python
 from pykokoro import KokoroPipeline, PipelineConfig
 from pykokoro.short_sentence_handler import ShortSentenceConfig
 
-# More aggressive short sentence handling
+# Less aggressive short sentence handling
 short_sentence_config = ShortSentenceConfig(
+    mode="wrap",
     min_phoneme_length=10,  # Treat segments <10 phoneme tokens as short
-    phoneme_pretext="...",  # Add this before and after short phonemes
+    phoneme_pretext="—",  # Add this before and after short phonemes
+)
+
+# More aggressive short sentence handling (useful for some voices)
+short_sentence_config = ShortSentenceConfig(
+    mode="randomized-phrase",
+    min_phoneme_length=40,  # Treat segments <10 phoneme tokens as short
+    phoneme_pretext="—",  # Add this before and after short phonemes
 )
 
 pipe = KokoroPipeline(
@@ -565,23 +575,17 @@ res = pipe.run("Why?")
 
 **Default Configuration:**
 
-- `min_phoneme_length=5`: Segments below this token count are wrapped
-- `phoneme_pretext="—"`: Phoneme context added before and after short segments
 - `enabled=True`: Short-sentence handling is enabled by default
-- `phrase_fallback_tries=3`: Phrase modes try up to three alternate phrase
-  templates before falling back to wrap mode when a cut lacks confident boundaries
-- Phrase-based modes use the `energy-valley` cutter by default. The single neutral
-  phrase defaults to `The conversation stopped, {segment}, before someone answered.`;
-  the single end phrase defaults to `The conversation stopped after one last reply:
-  {segment}`.
-
-Phrase-based modes choose neutral or end-context templates automatically from the
-segment text by default. To force one family for all short segments, set
-`phrase_selection` on the phrase resolve mode:
-
-Phrase-based short-sentence handling can significantly slow down processing because
-it may synthesize extra context phrases and fallback candidates, but it usually
-improves the audio for very short segments much more than simple phoneme wrapping.
+- `min_phoneme_length=30`: Segments below this token count engage short-sentence
+  handling
+- `mode="randomized-phrase"` Chose between `randomized-phrase`(default), `phrase`,
+  `wrap`(fallback), or `none`
+- `selection="auto"` Chose which phrase templates to use. `auto`= uses "end", if phrase
+  ends with '.', otherwise uses "neutral"
+- `phrase_fallback_tries=3`: Phrase modes try up to X alternate phrase templates before
+  falling back to wrap mode when a cut lacks confident boundaries
+- `phoneme_pretext="—"`: Phoneme context added in wrap mode before and after short
+  segments
 
 ```python
 from pykokoro.short_sentence_handler import (
@@ -602,10 +606,11 @@ short_sentence_config = ShortSentenceConfig(
 
 **Voice Recommendation:**
 
-For phrase-based short-sentence handling with the default `energy-valley` cutter,
-prefer these voices in order: `am_santa`, `af_nicole`, `bm_lewis`, `bm_george`,
-`af_bella`, `am_echo`, `af_sky`, `af_sarah`, `bm_fable`, `af_heart`, `am_michael`,
-`af_alloy`, `af_nova`, `bf_isabella`, and `am_adam`.
+For phrase-based short-sentence handling with the default `energy-valley` cutter, prefer
+these voices in order: `am_santa`, `af_nicole`, `bm_lewis`, `bm_george`, `af_bella`,
+`am_echo`, `af_sky`, `af_sarah`, `bm_fable`, `af_heart`, `am_michael`, `af_alloy`,
+`af_nova`, `bf_isabella`, and `am_adam`. If you prefer one of the less accurate voices,
+try blending it with one on this list. E.g. --voice-blend "bf_lily:60,bf_isabella:40"
 
 **Disabling Short Sentence Handling:**
 

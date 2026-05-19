@@ -29,6 +29,9 @@ TEST_SENTENCES = [
     "'Tis.",
     "Chapter IV.",
     "Hermione.",
+    "One … step. In front.",
+    "Of.",
+    "The other."
 ]
 DIRECT_COMPARISON_SENTENCES = ["Yes!", "Hermione."]
 OUTPUT_FILE = "short_sentence_randomized_demo.wav"
