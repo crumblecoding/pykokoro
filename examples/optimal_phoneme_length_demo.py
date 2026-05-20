@@ -130,7 +130,7 @@ def main():
     print("Kokoro created with default ShortSentenceConfig:")
     print("  min_phoneme_length: 30 (segments below this use short-sentence handling)")
     print("  resolve_mode: randomized-phrase")
-    print("  phrase_fallback_tries: 3")
+    print("  phrase_fallback_tries: 5")
 
     # Analyze the text to show which segments are short
     print_separator("Analyzing Text Segments")
@@ -172,7 +172,7 @@ def main():
     config = ShortSentenceConfig(
         min_phoneme_length=50,    # Treat segments <50 as short
         resolve_mode="randomized-phrase",
-        phrase_fallback_tries=3,
+        phrase_fallback_tries=5,
     )
 
     kokoro = pykokoro.Kokoro(short_sentence_config=config)

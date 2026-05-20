@@ -520,14 +520,6 @@ class AudioGenerator:
         for token in timestamped:
             if not token.get("is_target"):
                 continue
-            message = (
-                "[pykokoro timestamp] "
-                f"segment={segment.text!r} "
-                f"token={token.get('text')!r} "
-                f"start={token.get('start_ts')} "
-                f"end={token.get('end_ts')}"
-            )
-            logger.debug(message)
 
     def _prepare_short_sentence_phrase_audio(
         self,
@@ -595,6 +587,14 @@ class AudioGenerator:
         if not isinstance(templates, list):
             return None
 
+        max_attempts = _short_sentence_phrase_fallback_limit(
+            short_sentence_metadata,
+            default=len(templates),
+        )
+        if max_attempts == 0:
+            short_sentence_metadata["retry_attempts"] = 0
+            return None
+
         used_templates = {
             template
             for template in [short_sentence_metadata.get("phrase_template")]
@@ -607,7 +607,16 @@ class AudioGenerator:
             if template in used_templates:
                 continue
             used_templates.add(template)
+            if retry_attempts >= max_attempts:
+                break
             retry_attempts += 1
+            logger.info(
+                "Short sentence phrase cut for '%s' lacked confident boundaries; "
+                "trying another phrase %d/%d.",
+                segment.text[:50],
+                retry_attempts,
+                max_attempts,
+            )
 
             retry = build_short_sentence_phrase_retry(
                 segment,
@@ -630,9 +639,11 @@ class AudioGenerator:
             original_template = short_sentence_metadata.get("phrase_template")
             logger.info(
                 "Short sentence phrase cut for '%s' lacked confident boundaries; "
-                "failed with '%s', trying another phrase.",
+                "failed with '%s', trying another phrase %d/%d.",
                 segment.text[:50],
                 original_template if isinstance(original_template, str) else "",
+                retry_attempts,
+                max_attempts,
             )
             short_sentence_metadata.clear()
             short_sentence_metadata.update(retry.metadata)
@@ -897,6 +908,18 @@ def populate_short_sentence_boundary_metadata(
         metadata["previous_token_end_ts"] = float(previous_end)
     if next_tokens:
         metadata["next_token_start_ts"] = float(next_tokens[0]["start_ts"])
+
+
+def _short_sentence_phrase_fallback_limit(
+    metadata: dict[str, object],
+    *,
+    default: int,
+) -> int:
+    value = metadata.get("phrase_fallback_tries", default)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return max(0, int(default))
 
 
 def _is_spoken_token(token: dict[str, object]) -> bool:

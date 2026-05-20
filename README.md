@@ -584,8 +584,8 @@ res = pipe.run("Why?")
   `phrase`, or `wrap`(fallback)
 - `phrase_selection="auto"` Chose which phrase templates to use. `auto`= uses "end", if
   phrase ends with '.', otherwise uses "neutral"
-- `phrase_fallback_tries=3`: Phrase modes try up to X alternate phrase templates before
-  falling back to wrap mode when a cut lacks confident boundaries
+- `phrase_fallback_tries=5`: Phrase modes try up to X alternate phrase templates before
+  falling back to wrap mode when a cut lacks confident boundaries.
 - `phoneme_pretext="—"`: Phoneme context added in wrap mode before and after short
   segments
 
@@ -608,7 +608,7 @@ short_sentence_config = ShortSentenceConfig(
         )
     },
     resolve_mode="phrase",
-    phrase_fallback_tries=5,
+    phrase_fallback_tries=10,
 )
 ```
 

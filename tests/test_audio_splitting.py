@@ -464,13 +464,13 @@ def test_preprocess_phrase_fallbacks_skip_used_template_not_index(monkeypatch):
 
 def test_preprocess_randomized_phrase_mode_adds_following_fallbacks(monkeypatch):
     tokenizer = DummyTokenizer(factor=1)
-    config = ShortSentenceConfig(
     phrases = [
         "First {segment}.",
         "Second {segment}.",
         "Third {segment}.",
         "Fourth {segment}.",
     ]
+    config = ShortSentenceConfig(
         phrase_fallback_tries=3,
         resolve_modes={
             "randomized-phrase": RandomizedPhraseResolveMode(
@@ -519,6 +519,7 @@ def test_preprocess_randomized_phrase_mode_adds_following_fallbacks(monkeypatch)
         phrases[0],
         phrases[1],
     ]
+    assert metadata["phrase_fallback_tries"] == 3
 
 
 def test_preprocess_randomized_phrase_mode_uses_seeded_sequence(monkeypatch):
@@ -1264,6 +1265,7 @@ def test_prepare_phrase_audio_tries_phrase_fallbacks_before_wrap(
             SHORT_SENTENCE_META_KEY: {
                 "kind": "phrase",
                 "phrase_template": "Primary {segment}",
+                "phrase_fallback_tries": 3,
                 "phrase_fallback_templates": [
                     "Retry one {segment}",
                     "Retry two {segment}",
@@ -1274,7 +1276,7 @@ def test_prepare_phrase_audio_tries_phrase_fallbacks_before_wrap(
         },
     )
 
-    with caplog.at_level(logging.WARNING, logger="pykokoro.audio_generator"):
+    with caplog.at_level(logging.INFO, logger="pykokoro.audio_generator"):
         audio = generator._prepare_short_sentence_phrase_audio(
             segment,
             phrase_audio,
@@ -1290,3 +1292,84 @@ def test_prepare_phrase_audio_tries_phrase_fallbacks_before_wrap(
     assert metadata["cut_applied"] is True
     assert metadata["phrase_template"] == "Retry two {segment}"
     assert "using fallback phrase 'Retry two {segment}'" in caplog.text
+
+
+def test_prepare_phrase_audio_obeys_phrase_fallback_tries(
+    monkeypatch,
+):
+    tokenizer = DummyTokenizer(factor=1)
+    generator = AudioGenerator(
+        session=cast(Any, DummySession()),
+        tokenizer=cast(Any, tokenizer),
+    )
+    attempted_templates: list[str] = []
+
+    def fake_cut(audio: np.ndarray, metadata: dict[str, object]):
+        _ = audio, metadata
+        return None
+
+    def fake_retry(
+        segment: PhonemeSegment,
+        phrase_template: str,
+        base_metadata: dict[str, object],
+    ):
+        _ = segment, base_metadata
+        attempted_templates.append(phrase_template)
+        return short_sentence_handler.ShortSentenceApplication(
+            phonemes=f"phonemes for {phrase_template}",
+            tokens=[len(phrase_template)],
+            metadata={
+                "kind": "phrase",
+                "phrase_template": phrase_template,
+                "timing_tokens": [],
+            },
+        )
+
+    def fake_run_onnx(phonemes: str, voice_style: np.ndarray, speed: float):
+        _ = phonemes, voice_style, speed
+        return np.ones(240, dtype=np.float32), np.array([1.0, 1.0], dtype=np.float32)
+
+    monkeypatch.setattr(
+        "pykokoro.audio_generator.cut_short_sentence_phrase_audio",
+        fake_cut,
+    )
+    monkeypatch.setattr(
+        "pykokoro.audio_generator.build_short_sentence_phrase_retry",
+        fake_retry,
+    )
+    monkeypatch.setattr(generator, "_run_onnx", fake_run_onnx)
+    segment = PhonemeSegment(
+        id="seg_1",
+        segment_id="seg_1",
+        phoneme_id=0,
+        text="Go",
+        phonemes="phrase",
+        tokens=[1, 2, 3],
+        ssmd_metadata={
+            SHORT_SENTENCE_META_KEY: {
+                "kind": "phrase",
+                "phrase_template": "Primary {segment}",
+                "phrase_fallback_tries": 1,
+                "phrase_fallback_templates": [
+                    "Retry one {segment}",
+                    "Retry two {segment}",
+                    "Retry three {segment}",
+                ],
+                "fallback_phonemes": "wrap",
+                "fallback_tokens": [4],
+            }
+        },
+    )
+
+    audio = generator._prepare_short_sentence_phrase_audio(
+        segment,
+        np.ones(240, dtype=np.float32),
+        voice_style=np.zeros((16, 256), dtype=np.float32),
+        speed=1.0,
+    )
+
+    assert np.array_equal(audio, np.ones(240, dtype=np.float32))
+    assert attempted_templates == ["Retry one {segment}"]
+    metadata = segment.ssmd_metadata[SHORT_SENTENCE_META_KEY]
+    assert metadata["fallback_used"] == "wrap"
+    assert metadata["retry_attempts"] == 1

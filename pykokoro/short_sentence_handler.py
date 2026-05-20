@@ -162,7 +162,7 @@ class ShortSentenceConfig:
         resolve_mode: Resolve mode to apply to all short sentences. Default:
             "randomized-phrase".
         phrase_fallback_tries: Number of alternate phrase templates to try, if confidence level for cutting is too low for a phrase, before
-            falling back to wrap mode. Default: 3
+            falling back to wrap mode. Default: 5
             Higher=more robust and possibly slower for less-accurate voices, Lower=falls back to wrap mode quicker.
 
     """
@@ -178,7 +178,7 @@ class ShortSentenceConfig:
             "randomized-phrase": RandomizedPhraseResolveMode(),
         }
     )
-    phrase_fallback_tries: int = 3
+    phrase_fallback_tries: int = 5
 
     def should_use_pause_surrounding(self, phoneme_length: int, text: str) -> bool:
         """Check if segment should use pause surrounding.
@@ -374,6 +374,7 @@ def apply_short_sentence_mode(
         generated_token_count=len(phrase_tokens),
         phrase_template=phrase_template,
         phrase_fallback_templates=phrase_fallback_templates,
+        phrase_fallback_tries=config.phrase_fallback_tries,
         timing_tokens=timing_tokens,
         fallback_phonemes=fallback_phonemes,
         fallback_tokens=tokenize(fallback_phonemes),
@@ -521,6 +522,7 @@ def _build_short_sentence_metadata(
     generated_token_count: int,
     phrase_template: str | None = None,
     phrase_fallback_templates: list[str] | None = None,
+    phrase_fallback_tries: int | None = None,
     timing_tokens: list[dict[str, object]] | None = None,
     fallback_phonemes: str | None = None,
     fallback_tokens: list[int] | None = None,
@@ -545,6 +547,8 @@ def _build_short_sentence_metadata(
         metadata["timing_tokens"] = timing_tokens
     if phrase_fallback_templates:
         metadata["phrase_fallback_templates"] = phrase_fallback_templates
+    if phrase_fallback_tries is not None:
+        metadata["phrase_fallback_tries"] = max(0, int(phrase_fallback_tries))
     if fallback_phonemes is not None:
         metadata["fallback_phonemes"] = fallback_phonemes
     if fallback_tokens is not None:
@@ -579,7 +583,7 @@ def _build_short_sentence_retry_metadata(
     }
     if timing_tokens:
         metadata["timing_tokens"] = timing_tokens
-    for key in ("fallback_phonemes", "fallback_tokens"):
+    for key in ("fallback_phonemes", "fallback_tokens", "phrase_fallback_tries"):
         if key in base_metadata:
             metadata[key] = base_metadata[key]
     return metadata
